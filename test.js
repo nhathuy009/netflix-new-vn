@@ -6,6 +6,8 @@ const html = fs.readFileSync(__dirname + '/fixtures/new-to-watch-vi.html', 'utf8
 const page1 = JSON.parse(html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/)[1]).props.pageProps.data;
 const realPage2 = require('./fixtures/api-releases-vi-page2.json'); // phản hồi thật của API trang 2
 const titlePage = fs.readFileSync(__dirname + '/fixtures/netflix-title-82023496.html', 'utf8'); // trang phim "Sống đời" (phần nmTitleGQL thật)
+// Trang phim "Bác sĩ X" (loạt phim): nmTitleGQL và khối Show có danh sách mùa, tập (thật, giữ nguyên cách mã hoá)
+const showPage = fs.readFileSync(__dirname + '/fixtures/netflix-title-82682379.html', 'utf8');
 const PAST = Date.parse('2026-10-15T00:00:00+07:00');
 const page2 = {
   ...realPage2,
@@ -77,6 +79,7 @@ global.fetch = async (url, opts = {}) => {
     }
     // Trang phim của các tựa trong Top 10: tên giả lập "Top10 <mã>"
     const t10 = u.pathname.match(/^\/vn\/title\/(\d+)$/);
+    if (u.pathname === '/vn/title/82682379') return { ok: true, text: async () => showPage };
     // "Firefly Wedding" (83136358): giả lập trang phim Netflix không đọc được
     if (t10 && top10Type.has(t10[1]) && t10[1] !== '83136358') {
       const id = Number(t10[1]);
@@ -226,6 +229,21 @@ function call(handler, path) {
   assert.deepStrictEqual(h.parseTudumTop10(tudumTv, 'movie'), []); // trang loạt phim không có khối MOVIES
   assert.deepStrictEqual(h.parseTudumTop10('<html></html>', 'movie'), []);
   assert.strictEqual(nf.title, 'Sống đời');
+  assert.strictEqual(nf.seasons, undefined); // phim lẻ: không có danh sách mùa
+  // Loạt phim: đọc danh sách mùa, tập tiếng Việt từ khối Show
+  const show = h.parseNetflixTitle(showPage);
+  assert.deepStrictEqual([show.title, show.type, show.topId, show.year, show.availableFrom], ['Bác sĩ X', 'tv', 82682379, 2026, '2026-10-09T14:30:00.000Z']);
+  assert.strictEqual(show.seasons.length, 1);
+  assert.strictEqual(show.seasons[0].number, 1); // "Loạt phim truyền hình ngắn": không có số, theo thứ tự
+  assert.deepStrictEqual(show.seasons[0].episodes.map((e) => e.number), [1, 2, 3, 4, 5, 6]);
+  const ep3 = show.seasons[0].episodes[2];
+  assert.strictEqual(ep3.title, 'Tập 3');
+  assert.strictEqual(ep3.runtime, 3851);
+  assert.ok(ep3.synopsis.startsWith('Nhân viên bệnh viện bắt đầu nghi ngờ về quá khứ của Su Jeong'));
+  assert.ok(ep3.still.startsWith('https://'));
+  assert.strictEqual(h.seasonNumber({ numberLabelV2: 'Mùa 3' }, 0), 3);
+  assert.strictEqual(h.seasonNumber({ shortTitle: 'Phần 4' }, 0), 4);
+  assert.strictEqual(h.seasonNumber({ numberLabelV2: 'Loạt phim truyền hình ngắn' }, 1), 2);
 
   // Đối chiếu người
   const crew = (d) => ({ crew: [{ job: 'Director', name: d }] });
@@ -347,7 +365,7 @@ function call(handler, path) {
   assert.ok(topMovies.every((x, i) => x.releaseInfo.startsWith(`#${i + 1} tại Việt Nam · `)));
   assert.strictEqual(topMovies[6].releaseInfo, '#7 tại Việt Nam · 84 tuần trong Top 10');
   assert.strictEqual(topSeries.length, 10);
-  assert.strictEqual(topSeries[0].name, 'Top10 82682379'); // trang phim đọc theo mã loạt phim
+  assert.strictEqual(topSeries[0].name, 'Bác sĩ X'); // trang phim đọc theo mã loạt phim
   // "Firefly Wedding": trang phim không đọc được, dùng tên tiếng Anh trên trang Tudum để hiển thị và tìm
   assert.strictEqual(topSeries[7].name, 'Firefly Wedding');
   assert.ok(searches.some(([t, q]) => t === 'tv' && q === 'Firefly Wedding'));
@@ -397,6 +415,32 @@ function call(handler, path) {
     ['Tương lai E', '01/03/2099', 'movie'],
   ]);
 
+  // Trang chi tiết (meta)
+  // Loạt phim có danh sách tập từ Netflix: tên, tóm tắt tiếng Việt, ảnh; mã tập dạng tt…:mùa:tập
+  const doctorX = (await call(h, `/meta/series/${topSeries[0].id}.json`)).body.meta;
+  assert.strictEqual(doctorX.name, 'Bác sĩ X');
+  assert.strictEqual(doctorX.releaseInfo, '2026');
+  assert.ok(doctorX.description.startsWith('Ở một bệnh viện nơi cái tôi và tham nhũng lộng hành'));
+  assert.strictEqual(doctorX.videos.length, 6);
+  assert.deepStrictEqual(
+    { ...doctorX.videos[2], overview: doctorX.videos[2].overview.slice(0, 30), thumbnail: !!doctorX.videos[2].thumbnail },
+    { id: `${topSeries[0].id}:1:3`, title: 'Tập 3', season: 1, episode: 3, overview: 'Nhân viên bệnh viện bắt đầu ng', thumbnail: true, released: '2026-10-09T14:30:00.000Z' },
+  );
+  // Phim lẻ: mô tả Netflix, không có danh sách tập
+  const songMeta = (await call(h, '/meta/movie/tt36429458.json')).body.meta;
+  assert.deepStrictEqual([songMeta.name, songMeta.type, songMeta.videos], ['Sống đời', 'movie', undefined]);
+  assert.ok(songMeta.description.startsWith('Người mẹ đơn thân'));
+  // Sắp ra mắt: trang chi tiết không ghép ngày vào tên
+  const upD = upMovies.find((x) => x.name === '01/02 · Tương lai D');
+  assert.strictEqual((await call(h, `/meta/movie/${upD.id}.json`)).body.meta.name, 'Tương lai D');
+  // Trả 404 để Stremio dùng addon khác: loạt phim không có danh sách tập, phim ngoài danh sách, sai loại
+  assert.strictEqual((await call(h, '/meta/series/tt88888888.json')).status, 404); // "Cái bẫy": trang phim không có danh sách tập
+  assert.strictEqual((await call(h, '/meta/movie/tt0000001.json')).status, 404);
+  assert.strictEqual((await call(h, '/meta/series/tt36429458.json')).status, 404);
+  const detailDbg = (await call(h, '/debug.json')).body.detail;
+  assert.ok(detailDbg.seriesWithEpisodes >= 1 && detailDbg.seriesWithoutEpisodes.includes('Cái bẫy'));
+  assert.ok((await call(h, '/manifest.json')).body.resources.includes('meta'));
+
   // Dạng request trên Vercel sau rewrite: /api/index?__path=<đường dẫn gốc>
   assert.strictEqual((await call(h, '/api/index?__path=')).body.id, 'community.netflix.newtowatch.vi');            // trang gốc /
   assert.strictEqual((await call(h, '/api/index?__path=manifest.json')).body.id, 'community.netflix.newtowatch.vi');
@@ -437,6 +481,14 @@ function call(handler, path) {
   assert.ok(songDbg.tried.some((t) => t.startsWith('movie/1458857') && t.includes('+12'))); // đạo diễn + 2 diễn viên khớp
   assert.ok(!dbg.needsReview.some((x) => x.title === 'Sống đời'));   // trùng đạo diễn/diễn viên: không cần kiểm tra
   assert.ok(dbg.needsReview.every((x) => x.tmdb.startsWith('https://www.themoviedb.org/') && x.netflix.startsWith('https://www.netflix.com/vn/title/')));
+
+  // Trang chi tiết khi dữ liệu chưa tải: trả 404 ngay (không chờ 20–40 giây), đồng thời bắt đầu tải
+  apiUp = true; wdUp = true; top10Up = true;
+  h = freshHandler();
+  const cold = await call(h, '/meta/movie/tt36429458.json');
+  assert.strictEqual(cold.status, 404);
+  await call(h, '/debug.json'); // chờ lần tải đã được kích hoạt ở trên
+  assert.strictEqual((await call(h, '/meta/movie/tt36429458.json')).status, 200);
 
   console.log('OK: tất cả test đều đạt');
 })().catch((e) => { console.error(e); process.exit(1); });

@@ -15,10 +15,12 @@ const COLLECTION = { SERIES: 2170013, FILM: 2694103, SPECIALS: 2173907, GAMES: 8
 
 const manifest = {
   id: 'community.netflix.newtowatch.vi',
-  version: '1.6.1',
+  version: '1.7.0',
   name: 'Mới trên Netflix (VN)',
   description: 'Phim và loạt phim mới và sắp ra mắt trên Netflix Việt Nam (about.netflix.com/vi/new-to-watch), Top 10 tuần tại Việt Nam (netflix.com/tudum/top10/vietnam)',
-  resources: ['catalog'],
+  // meta: trang chi tiết tiếng Việt (mô tả, danh sách tập) cho các phim trong danh sách của addon.
+  // Phim khác trả 404 để Stremio dùng addon dữ liệu phim kế tiếp (TMDB, Cinemeta).
+  resources: ['catalog', 'meta'],
   types: ['movie', 'series'],
   idPrefixes: ['tt'],
   catalogs: [
@@ -112,7 +114,11 @@ function extractObject(text, key) {
   const k = text.indexOf(key);
   if (k < 0) return null;
   const start = text.indexOf('{', k + key.length);
-  if (start < 0) return null;
+  return start < 0 ? null : balancedAt(text, start);
+}
+
+// Khối {...} bắt đầu đúng tại vị trí start
+function balancedAt(text, start) {
   let depth = 0, inStr = false, esc = false;
   for (let i = start; i < text.length; i++) {
     const c = text[i];
@@ -150,6 +156,46 @@ function parseNetflixTitle(html) {
     background: d.artwork?.heroImage?.url,
     // Mã gốc của tựa. Với loạt phim, danh sách "Mới trên Netflix" cho mã của mùa, trang phim cho mã của cả loạt phim.
     topId: Number(d.metaData.topLevelVideoId || d.metaData.videoId) || null,
+    ...parseNetflixShow(html),
+  };
+}
+
+// Số mùa: nhãn "Mùa 2" / "Phần 2" / "Season 2"; loạt phim ngắn ("Loạt phim truyền hình ngắn") hoặc không có nhãn thì theo thứ tự
+function seasonNumber(node, index) {
+  const m = [node.numberLabelV2, node.shortTitle, node.title].filter(Boolean).join(' ').match(/(?:Mùa|Phần|Season)\s*(\d+)/i);
+  return m ? Number(m[1]) : index + 1;
+}
+
+// Danh sách mùa và tập (tiếng Việt) nằm trong khối Show của models.graphqlClcs:
+// {"__typename":"Show",...,"seasons":{"__typename":"SeasonsConnection","edges":[{node: Season{episodes:{edges:[{node: Episode}]}}}]}}
+function parseNetflixShow(html) {
+  const marker = html.indexOf('"seasons":{"__typename":"SeasonsConnection"');
+  if (marker < 0) return {};
+  const start = html.lastIndexOf('{"__typename":"Show"', marker);
+  const raw = start < 0 ? null : balancedAt(html, start);
+  if (!raw) return {};
+  let show;
+  try { show = JSON.parse(decodeJs(raw)); } catch { return {}; }
+  const seasons = (show.seasons?.edges || []).map((se, i) => {
+    const node = se?.node || {};
+    return {
+      number: seasonNumber(node, i),
+      episodes: (node.episodes?.edges || [])
+        .map((e) => e?.node)
+        .filter((ep) => ep && Number(ep.number))
+        .map((ep) => ({
+          number: Number(ep.number),
+          title: nfc(ep.title) || undefined,
+          synopsis: nfc(ep.shortSynopsis) || undefined,
+          runtime: Number(ep.runtimeSec) || undefined,
+          still: ep.merchStill300?.url || undefined,
+        })),
+    };
+  }).filter((x) => x.episodes.length);
+  return {
+    seasons: seasons.length ? seasons : undefined,
+    availableFrom: show.availabilityStartTime || undefined,
+    year: Number(show.latestYear) || undefined,
   };
 }
 
@@ -378,6 +424,7 @@ function withMeta(item, { imdb, mediaType, details, via }) {
     ...item,
     via,
     tmdb: details?.id ? `${mediaType}/${details.id}` : undefined,
+    year: Number((details?.release_date || details?.first_air_date || '').slice(0, 4)) || undefined,
     meta: {
       id: imdb,
       type: mediaType === 'tv' ? 'series' : 'movie',
@@ -514,7 +561,7 @@ async function fetchWikidata(netflixIds) {
   try {
     const url = `${WIKIDATA}?format=json&query=${encodeURIComponent(wikidataQuery(netflixIds))}`;
     const r = await fetch(url, {
-      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.6.1 (Stremio catalog addon)' },
+      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.7.0 (Stremio catalog addon)' },
     });
     if (!r.ok) throw new Error(`Wikidata ${r.status}`);
     return parseWikidata(await r.json());
@@ -612,6 +659,40 @@ function catalogFor(data, type, id) {
     .map((it) => it.meta);
 }
 
+// ---------- Trang chi tiết (meta) ----------
+
+// Tìm phim theo mã IMDb trong 6 dòng của addon; ưu tiên mục có danh sách tập từ Netflix
+function findDetail(data, type, id) {
+  const all = [...data.items, ...data.top10.items, ...data.upcoming].filter((x) => x.meta?.id === id && x.meta.type === type);
+  return all.find((x) => x.nf?.seasons?.length) || all[0] || null;
+}
+
+// Trang chi tiết tiếng Việt: mô tả, thể loại, đạo diễn, diễn viên của Netflix; với loạt phim thêm danh sách tập
+// (tên, tóm tắt, ảnh) từ trang phim Netflix. Loạt phim không có danh sách tập thì trả null để Stremio dùng
+// addon khác, vì thiếu danh sách tập thì không chọn được tập nào để xem.
+function detailMeta(item) {
+  const nf = item.nf || {};
+  const meta = {
+    ...item.meta,
+    name: item.title, // không có ngày ghép ở đầu như dòng "Sắp ra mắt"
+    releaseInfo: String(nf.year || item.year || '') || undefined,
+  };
+  if (meta.type === 'series') {
+    if (!nf.seasons?.length) return null;
+    const released = new Date(nf.availableFrom || item.startTime || Date.now()).toISOString();
+    meta.videos = nf.seasons.flatMap((season) => season.episodes.map((ep) => ({
+      id: `${meta.id}:${season.number}:${ep.number}`, // dạng Stremio dùng để các addon stream tìm nguồn phát
+      title: ep.title || `Tập ${ep.number}`,
+      season: season.number,
+      episode: ep.number,
+      overview: ep.synopsis,
+      thumbnail: ep.still,
+      released,
+    })));
+  }
+  return meta;
+}
+
 // ---------- HTTP ----------
 
 function send(res, status, body, cacheSeconds = 0) {
@@ -643,6 +724,17 @@ async function handler(req, res) {
       return send(res, 200, { metas: catalogFor(await load(), type, id) }, 21600);
     }
 
+    const mm = path.match(/^\/meta\/(movie|series)\/([^/]+)\.json$/);
+    if (mm) {
+      // Stremio hỏi trang chi tiết của mọi phim, không chỉ phim của addon. Dữ liệu chưa tải xong (lần đầu mất
+      // 20–40 giây) thì trả 404 ngay để không làm chậm phim khác, và bắt đầu tải; dữ liệu cũ thì dùng tạm và làm mới.
+      if (!cache.data || Date.now() - cache.at >= CACHE_MS) load().catch(() => {});
+      const item = cache.data && findDetail(cache.data, mm[1], decodeURIComponent(mm[2]));
+      const meta = item && detailMeta(item);
+      if (!meta) return send(res, 404, { meta: null });
+      return send(res, 200, { meta }, 21600);
+    }
+
     // Kiểm tra: nguồn dữ liệu, số tựa đọc được, tựa nào không khớp TMDB
     if (path === '/debug.json') {
       const d = await load();
@@ -670,6 +762,15 @@ async function handler(req, res) {
               tmdb: x.tmdb, imdb: x.meta?.id, reason: x.error, tried: x.tried,
             })),
         },
+        detail: (() => {
+          const all = [...d.items, ...d.top10.items, ...d.upcoming].filter((x) => x.meta);
+          const series = all.filter((x) => x.meta.type === 'series');
+          return {
+            movies: all.length - series.length,
+            seriesWithEpisodes: series.filter((x) => x.nf?.seasons?.length).length,
+            seriesWithoutEpisodes: series.filter((x) => !x.nf?.seasons?.length).map((x) => x.title),
+          };
+        })(),
         upcoming: {
           total: d.upcoming.length,
           matched: d.upcoming.filter((x) => x.meta).length,
@@ -708,3 +809,4 @@ module.exports.searchYears = searchYears;
 module.exports.parseTudumTop10 = parseTudumTop10;
 module.exports.cleanSeasonTitle = cleanSeasonTitle;
 module.exports.decodeJsString = decodeJsString;
+module.exports.seasonNumber = seasonNumber;

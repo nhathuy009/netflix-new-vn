@@ -6,7 +6,7 @@ Tạo 6 danh sách trong Stremio:
 - **Netflix: Phim sắp ra mắt**, **Netflix: Loạt phim sắp ra mắt**: các tựa trong cùng danh sách "Mới trên Netflix" mà ngày ra mắt sau hôm nay, kèm ngày ra mắt
 - **Netflix: Top 10 phim Việt Nam**, **Netflix: Top 10 loạt phim Việt Nam**: bảng xếp hạng theo tuần của Netflix Tudum, https://www.netflix.com/tudum/top10/vietnam và https://www.netflix.com/tudum/top10/vietnam/tv
 
-Addon chỉ cung cấp danh sách. Bấm vào phim, Stremio dùng các addon stream bạn đã cài để phát.
+Addon cung cấp danh sách và trang chi tiết tiếng Việt cho các phim trong danh sách; không cung cấp nguồn phát. Bấm vào phim, Stremio dùng các addon stream bạn đã cài để phát.
 
 ## Cách hoạt động
 
@@ -25,6 +25,14 @@ Addon chỉ cung cấp danh sách. Bấm vào phim, Stremio dùng các addon str
    - **Không có trên Wikidata:** tìm TMDB bằng tên tiếng Việt và tiếng Anh (với Netflix Original chiếu lần đầu, tìm thêm một lượt lọc theo năm lên Netflix), xét toàn bộ 20 kết quả mỗi lượt, chấm điểm ứng viên theo loại, tên và ngày ra mắt so với ngày lên Netflix. Với Netflix Original chiếu lần đầu, ứng viên ra trước ngày lên Netflix hơn 1 năm bị loại. Với 3 ứng viên tốt nhất, đối chiếu đạo diễn và diễn viên với trang Netflix (+6 nếu trùng đạo diễn, +6 nếu trùng từ 2 diễn viên, −4 nếu không trùng ai), rồi lấy ứng viên tổng điểm cao nhất có IMDb ID.
    - Tựa không có IMDb ID sẽ bị bỏ (Stremio cần ID `tt...`).
 6. Kết quả được cache 6 giờ. Lần tải đầu mất khoảng 20–40 giây.
+
+### Trang chi tiết tiếng Việt
+
+1. Với các phim trong 6 dòng, addon trả trang chi tiết lấy từ trang phim Netflix: mô tả tiếng Việt, thể loại, đạo diễn, diễn viên.
+2. Loạt phim có thêm danh sách tập (tên tập, tóm tắt tiếng Việt, ảnh) đọc từ khối Show trong `models.graphqlClcs` của trang phim. Mã mỗi tập dạng `tt…:mùa:tập`, để các addon stream tìm được nguồn phát. Số mùa lấy từ nhãn "Mùa N"; loạt phim ngắn không có số thì theo thứ tự.
+3. Phim không nằm trong 6 dòng, hoặc loạt phim không đọc được danh sách tập: trả 404 để Stremio dùng addon dữ liệu phim kế tiếp (TMDB, Cinemeta).
+4. Stremio hỏi trang chi tiết của mọi phim. Khi dữ liệu chưa tải xong (lần đầu mất 20–40 giây), addon trả 404 ngay để không làm chậm phim khác.
+5. Stremio lấy trang chi tiết từ addon đầu tiên trong danh sách có dữ liệu, nên cần kéo addon này lên **trên** các addon dữ liệu phim khác (TMDB, Cinemeta) trong mục Addons.
 
 ### Sắp ra mắt
 
@@ -59,6 +67,7 @@ Mở `http://127.0.0.1:7000/debug.json` để kiểm tra:
 - `matchedItems`: mỗi tựa khớp với mã TMDB/IMDb nào, qua nguồn nào (`wikidata` hoặc `search`), và với `search` thì các ứng viên đã thử kèm điểm (`điểm 4+12` = điểm theo tên/ngày + điểm đối chiếu người).
 - `needsReview`: các tựa khớp theo tên mà không trùng đạo diễn hay diễn viên nào, kèm link TMDB và Netflix để kiểm tra tay.
 - `unmatched`: các tựa không khớp, kèm các ứng viên đã thử.
+- `detail`: số phim lẻ và loạt phim có trang chi tiết; loạt phim không có danh sách tập (các phim này dùng trang chi tiết của addon khác).
 - `upcoming`: các tựa sắp ra mắt, ngày ra mắt, và kết quả khớp của từng tựa.
 - `top10`: địa chỉ và lỗi (nếu có) của từng bảng (`lists`), tuần xếp hạng (`weekEnd`), số tựa khớp, và từng tựa theo thứ hạng kèm số tuần trong Top 10.
 
