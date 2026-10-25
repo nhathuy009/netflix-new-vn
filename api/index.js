@@ -31,8 +31,8 @@ const manifest = {
 
 const UA = { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json, text/html', 'Accept-Language': LANG, Referer: PAGE_URL };
 
-async function fetchApiPage(page) {
-  const url = `${API_URL}?language=${LANG}&country=${COUNTRY}&page=${page}`;
+async function fetchApiPage(page, language = LANG) {
+  const url = `${API_URL}?language=${language}&country=${COUNTRY}&page=${page}`;
   const r = await fetch(url, { headers: UA });
   if (!r.ok) throw new Error(`Netflix API ${r.status}`);
   const j = await r.json();
@@ -63,19 +63,36 @@ async function fetchReleases() {
   }
 }
 
+// Tên tiếng Anh theo videoID, dùng khi tên tiếng Việt không có trên TMDB. Lỗi thì bỏ qua.
+async function fetchEnglishTitles() {
+  try {
+    const first = await fetchApiPage(1, 'en');
+    const pages = Math.min(first.totalPages || 1, MAX_PAGES);
+    const rest = await Promise.all(Array.from({ length: pages - 1 }, (_, i) => fetchApiPage(i + 2, 'en')));
+    return new Map([first, ...rest].flatMap((p) => p.data).map((r) => [r.videoID, nfc(r.title1)]));
+  } catch {
+    return new Map();
+  }
+}
+
 // Đoán loại từ dữ liệu Netflix; null = chưa biết, để TMDB quyết định
 function netflixType(row) {
   if (row.collection === COLLECTION.SERIES) return 'tv';
   if (row.collection === COLLECTION.FILM) return 'movie';
-  if (/^(Mùa|Phần|Chương|Tập)\s|Loạt phim/i.test(row.title2 || '')) return 'tv';
+  if (/^(Mùa|Phần|Chương|Tập)\s|Loạt phim/i.test(nfc(row.title2) || '')) return 'tv';
   return null;
 }
 
+// Netflix trả một số tên ở dạng Unicode tách dấu (NFD); đưa về NFC để so khớp và tìm TMDB đúng
+const nfc = (s) => (typeof s === 'string' ? s.normalize('NFC') : s);
+
 function toItem(row) {
+  const title = nfc(row.title1);
+  const subtitle = nfc(row.title2);
   return {
     netflixId: row.videoID,
-    title: row.title1,
-    subtitle: row.title2 !== row.title1 ? row.title2 : undefined,
+    title,
+    subtitle: subtitle !== title ? subtitle : undefined,
     startTime: row.startTime,
     image: row.image,
     hint: netflixType(row),
@@ -98,14 +115,21 @@ async function tmdb(path, params = {}) {
   return r.json();
 }
 
-async function findOnTmdb(item) {
-  const q = { query: item.title, language: 'vi-VN', include_adult: 'false' };
-  if (item.hint) {
-    const res = await tmdb(`/search/${item.hint}`, q);
-    if (res.results?.[0]) return { ...res.results[0], media_type: item.hint };
+async function searchTmdb(title, hint) {
+  const q = { query: title, language: 'vi-VN', include_adult: 'false' };
+  if (hint) {
+    const res = await tmdb(`/search/${hint}`, q);
+    if (res.results?.[0]) return { ...res.results[0], media_type: hint };
   }
   const res = await tmdb('/search/multi', q);
   return (res.results || []).find((x) => x.media_type === 'movie' || x.media_type === 'tv');
+}
+
+// Thử tên tiếng Việt trước, không ra thì thử tên tiếng Anh
+async function findOnTmdb(item) {
+  const hit = await searchTmdb(item.title, item.hint);
+  if (hit || !item.enTitle || item.enTitle === item.title) return hit;
+  return searchTmdb(item.enTitle, item.hint);
 }
 
 function vnDate(ms) {
@@ -150,12 +174,12 @@ async function load() {
   if (cache.data && Date.now() - cache.at < CACHE_MS) return cache.data;
   if (cache.pending) return cache.pending;
   cache.pending = (async () => {
-    const { source, totalItems, rows } = await fetchReleases();
+    const [{ source, totalItems, rows }, enTitles] = await Promise.all([fetchReleases(), fetchEnglishTitles()]);
     const seen = new Set();
     const items = rows
       .filter((r) => r.videoID && r.title1 && r.collection !== COLLECTION.GAMES)
       .filter((r) => !seen.has(r.videoID) && seen.add(r.videoID))
-      .map(toItem);
+      .map((r) => ({ ...toItem(r), enTitle: enTitles.get(r.videoID) }));
     const released = items.filter((x) => !x.startTime || x.startTime <= Date.now()); // bỏ tựa chưa ra mắt
     const resolved = await resolveAll(released);
     const data = { fetchedAt: new Date().toISOString(), source, totalItems, read: items.length, released: released.length, items: resolved };
@@ -214,7 +238,7 @@ async function handler(req, res) {
         read: d.read,
         released: d.released,
         matched: d.items.filter((x) => x.meta).length,
-        unmatched: d.items.filter((x) => !x.meta).map((x) => ({ title: x.title, netflixId: x.netflixId, reason: x.error })),
+        unmatched: d.items.filter((x) => !x.meta).map((x) => ({ title: x.title, enTitle: x.enTitle, netflixId: x.netflixId, reason: x.error })),
       });
     }
 
