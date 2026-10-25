@@ -58,8 +58,9 @@ Mở `http://127.0.0.1:7000/debug.json` để kiểm tra:
 
 1. Đưa thư mục này lên một repo GitHub, rồi Import vào Vercel (không cần build command).
 2. Settings → Environment Variables: thêm `TMDB_API_KEY` (API key v3 hoặc Read Access Token v4 đều được).
-3. Deploy. URL addon: `https://<ten-du-an>.vercel.app/manifest.json`
-4. Trong Stremio: Addons → dán link manifest vào ô tìm kiếm → Install.
+3. Hàm chạy ở vùng Singapore (`"regions": ["sin1"]` trong `vercel.json`): Netflix trả dữ liệu theo quốc gia của địa chỉ IP gọi tới, nên chạy ở châu Á cho kết quả gần với Netflix Việt Nam hơn chạy ở Mỹ.
+4. Deploy. URL addon: `https://<ten-du-an>.vercel.app/manifest.json`
+5. Trong Stremio: Addons → dán link manifest vào ô tìm kiếm → Install.
 
 ## Giới hạn cần biết
 
