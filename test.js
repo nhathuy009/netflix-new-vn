@@ -375,16 +375,20 @@ function call(handler, path) {
   // Sắp ra mắt: chỉ tựa chưa ra mắt, sớm nhất trước, kèm ngày ra mắt
   const upMovies = (await call(h, '/catalog/movie/netflix-upcoming-movie.json')).body.metas;
   const upSeries = (await call(h, '/catalog/series/netflix-upcoming-series.json')).body.metas;
-  assert.deepStrictEqual(upMovies.filter((x) => x.name.startsWith('Tương lai')).map((x) => [x.name, x.releaseInfo]), [
-    ['Tương lai D', 'Ra mắt 01/02/2099'],
-    ['Tương lai E', 'Ra mắt 01/03/2099'],
+  // Tên có ngày ra mắt ở đầu, để thấy được ngay ở trang chủ Stremio
+  assert.deepStrictEqual(upMovies.filter((x) => x.name.includes('Tương lai')).map((x) => [x.name, x.releaseInfo]), [
+    ['01/02 · Tương lai D', 'Ra mắt 01/02/2099'],
+    ['01/03 · Tương lai E', 'Ra mắt 01/03/2099'],
   ]);
-  assert.deepStrictEqual(upSeries.filter((x) => x.name === 'Tương lai C').map((x) => x.releaseInfo), ['Ra mắt 01/01/2099']);
+  assert.deepStrictEqual(upSeries.filter((x) => x.name === '01/01 · Tương lai C').map((x) => x.releaseInfo), ['Ra mắt 01/01/2099']);
+  assert.ok(upMovies.concat(upSeries).every((x) => /^\d{2}\/\d{2} · /.test(x.name)));
+  // Các dòng khác giữ tên gốc
+  assert.ok(!movies.concat(series, topMovies, topSeries).some((x) => / · /.test(x.name)));
   assert.ok(upMovies.concat(upSeries).every((x) => x.releaseInfo.startsWith('Ra mắt ')));
   const upDates = upMovies.map((x) => x.releaseInfo.slice(7, 17).split('/').reverse().join(''));
   assert.deepStrictEqual(upDates, [...upDates].sort());
   // Tựa sắp ra mắt không lẫn vào danh sách phim mới, tựa đã ra mắt không lẫn vào Sắp ra mắt
-  assert.ok(!movies.some((x) => x.name.startsWith('Tương lai')));
+  assert.ok(!movies.some((x) => x.name.includes('Tương lai')));
   assert.ok(!upMovies.some((x) => x.name === 'Phim lẻ A'));
   const upDbg = (await call(h, '/debug.json')).body.upcoming;
   assert.deepStrictEqual(upDbg.items.filter((x) => x.title.startsWith('Tương lai')).map((x) => [x.title, x.date, x.type]), [

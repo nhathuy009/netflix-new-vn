@@ -15,7 +15,7 @@ const COLLECTION = { SERIES: 2170013, FILM: 2694103, SPECIALS: 2173907, GAMES: 8
 
 const manifest = {
   id: 'community.netflix.newtowatch.vi',
-  version: '1.6.0',
+  version: '1.6.1',
   name: 'Mới trên Netflix (VN)',
   description: 'Phim và loạt phim mới và sắp ra mắt trên Netflix Việt Nam (about.netflix.com/vi/new-to-watch), Top 10 tuần tại Việt Nam (netflix.com/tudum/top10/vietnam)',
   resources: ['catalog'],
@@ -381,7 +381,8 @@ function withMeta(item, { imdb, mediaType, details, via }) {
     meta: {
       id: imdb,
       type: mediaType === 'tv' ? 'series' : 'movie',
-      name: item.title,
+      // Sắp ra mắt: ghép ngày vào tên ("26/10 · Lương tối thiểu"), vì trang chủ Stremio chỉ hiện poster và tên
+      name: item.upcoming ? `${vnDate(item.startTime).slice(0, 5)} · ${item.title}` : item.title,
       poster: details?.poster_path ? `https://image.tmdb.org/t/p/w342${details.poster_path}` : item.image,
       background: details?.backdrop_path ? `https://image.tmdb.org/t/p/w1280${details.backdrop_path}` : nf?.background || item.image,
       description: desc || undefined,
@@ -513,7 +514,7 @@ async function fetchWikidata(netflixIds) {
   try {
     const url = `${WIKIDATA}?format=json&query=${encodeURIComponent(wikidataQuery(netflixIds))}`;
     const r = await fetch(url, {
-      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.6.0 (Stremio catalog addon)' },
+      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.6.1 (Stremio catalog addon)' },
     });
     if (!r.ok) throw new Error(`Wikidata ${r.status}`);
     return parseWikidata(await r.json());

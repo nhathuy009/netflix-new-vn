@@ -30,7 +30,7 @@ Addon chỉ cung cấp danh sách. Bấm vào phim, Stremio dùng các addon str
 
 1. Lấy từ cùng danh sách "Mới trên Netflix": các tựa có ngày ra mắt sau thời điểm làm mới dữ liệu. Danh sách này chỉ có các tựa trong tháng, nên dòng "Sắp ra mắt" cũng chỉ đến hết tháng.
 2. Đi qua đúng các bước như tựa đã ra mắt (trang phim, Wikidata, TMDB). Tựa chưa có IMDb ID (thường gặp với phim chưa ra mắt) sẽ không hiện.
-3. Xếp tựa ra mắt sớm nhất lên đầu, hiển thị dạng "Ra mắt 26/10/2026". Khi đến ngày ra mắt, tựa tự chuyển sang dòng phim mới ở lần làm mới kế tiếp (tối đa 6 giờ).
+3. Xếp tựa ra mắt sớm nhất lên đầu. Ngày ra mắt được ghép vào tên ("26/10 · Lương tối thiểu") để thấy được ngay ở trang chủ Stremio, nơi chỉ hiện poster và tên; khung xem trước trong Discover hiện thêm "Ra mắt 26/10/2026". Khi đến ngày ra mắt, tựa tự chuyển sang dòng phim mới ở lần làm mới kế tiếp (tối đa 6 giờ).
 
 ### Top 10 Việt Nam theo tuần
 
