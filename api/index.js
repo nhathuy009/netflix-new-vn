@@ -15,9 +15,9 @@ const COLLECTION = { SERIES: 2170013, FILM: 2694103, SPECIALS: 2173907, GAMES: 8
 
 const manifest = {
   id: 'community.netflix.newtowatch.vi',
-  version: '1.5.2',
+  version: '1.6.0',
   name: 'Mới trên Netflix (VN)',
-  description: 'Phim và loạt phim mới lên Netflix Việt Nam (about.netflix.com/vi/new-to-watch) và Top 10 tuần tại Việt Nam (netflix.com/tudum/top10/vietnam)',
+  description: 'Phim và loạt phim mới và sắp ra mắt trên Netflix Việt Nam (about.netflix.com/vi/new-to-watch), Top 10 tuần tại Việt Nam (netflix.com/tudum/top10/vietnam)',
   resources: ['catalog'],
   types: ['movie', 'series'],
   idPrefixes: ['tt'],
@@ -26,6 +26,8 @@ const manifest = {
     { type: 'series', id: 'netflix-new-series', name: 'Netflix: Loạt phim mới' },
     { type: 'movie', id: 'netflix-top10-movie', name: 'Netflix: Top 10 phim Việt Nam' },
     { type: 'series', id: 'netflix-top10-series', name: 'Netflix: Top 10 loạt phim Việt Nam' },
+    { type: 'movie', id: 'netflix-upcoming-movie', name: 'Netflix: Phim sắp ra mắt' },
+    { type: 'series', id: 'netflix-upcoming-series', name: 'Netflix: Loạt phim sắp ra mắt' },
   ],
 };
 
@@ -384,7 +386,7 @@ function withMeta(item, { imdb, mediaType, details, via }) {
       background: details?.backdrop_path ? `https://image.tmdb.org/t/p/w1280${details.backdrop_path}` : nf?.background || item.image,
       description: desc || undefined,
       releaseInfo: [
-        item.rank ? `#${item.rank} tại Việt Nam` : `Lên Netflix ${vnDate(item.startTime)}`,
+        item.rank ? `#${item.rank} tại Việt Nam` : `${item.upcoming ? 'Ra mắt' : 'Lên Netflix'} ${vnDate(item.startTime)}`,
         item.weeks ? `${item.weeks} tuần trong Top 10` : null,
         nf?.isOriginal ? 'Netflix Original' : null,
       ].filter(Boolean).join(' · '),
@@ -511,7 +513,7 @@ async function fetchWikidata(netflixIds) {
   try {
     const url = `${WIKIDATA}?format=json&query=${encodeURIComponent(wikidataQuery(netflixIds))}`;
     const r = await fetch(url, {
-      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.5.2 (Stremio catalog addon)' },
+      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.6.0 (Stremio catalog addon)' },
     });
     if (!r.ok) throw new Error(`Wikidata ${r.status}`);
     return parseWikidata(await r.json());
@@ -534,13 +536,16 @@ async function load() {
       .filter((r) => r.videoID && r.title1 && r.collection !== COLLECTION.GAMES)
       .filter((r) => !seen.has(r.videoID) && seen.add(r.videoID))
       .map((r) => ({ ...toItem(r), enTitle: enTitles.get(r.videoID) }));
-    const released = items.filter((x) => !x.startTime || x.startTime <= Date.now()); // bỏ tựa chưa ra mắt
+    // Tựa chưa ra mắt đi qua đúng các bước như tựa đã ra mắt, rồi tách sang dòng "Sắp ra mắt"
+    const now = Date.now();
+    items.forEach((x) => { x.upcoming = !!x.startTime && x.startTime > now; });
+    const released = items.filter((x) => !x.upcoming);
     // Trang phim Netflix: loại chính xác, mã gốc, tên, đạo diễn, diễn viên, mô tả
     const [pages, topPages] = await Promise.all([
-      mapInBatches(released, (x) => fetchNetflixTitle(x.netflixId)),
+      mapInBatches(items, (x) => fetchNetflixTitle(x.netflixId)),
       mapInBatches(top10.rows, (r) => fetchNetflixTitle(r.showId)),
     ]);
-    released.forEach((x, i) => {
+    items.forEach((x, i) => {
       x.nf = pages[i];
       if (x.nf?.type) x.hint = x.nf.type; // Netflix ghi rõ loại → ưu tiên hơn mọi cách đoán
       x.showId = x.nf?.topId || x.netflixId;
@@ -564,16 +569,18 @@ async function load() {
     }));
     // Wikidata lưu mã gốc của loạt phim, nên tra bằng cả mã gốc lẫn mã trong danh sách
     const wikidata = await fetchWikidata([
-      ...new Set([...released, ...topItems].flatMap((x) => [x.showId, x.netflixId, x.seasonId].filter(Boolean).map(String))),
+      ...new Set([...items, ...topItems].flatMap((x) => [x.showId, x.netflixId, x.seasonId].filter(Boolean).map(String))),
     ]);
-    const resolved = await resolveAll(released, wikidata);
+    const allResolved = await resolveAll(items, wikidata);
+    const resolved = allResolved.filter((x) => !x.upcoming);
     // Không đọc được trang phim thì không có tên để hiển thị hay để tìm
     const topResolved = await resolveAll(topItems.filter((x) => x.title), wikidata);
     const topFailed = topItems.filter((x) => !x.title).map((x) => ({ ...x, error: 'không đọc được trang phim Netflix, trang Tudum cũng không có tên' }));
     const data = {
       fetchedAt: new Date().toISOString(), source, totalItems, read: items.length, released: released.length,
-      netflixPages: pages.filter(Boolean).length, wikidata: wikidata.size, items: resolved,
+      netflixPages: pages.filter((p, i) => p && !items[i].upcoming).length, wikidata: wikidata.size, items: resolved,
       top10: { lists: top10.lists, items: [...topResolved, ...topFailed] },
+      upcoming: allResolved.filter((x) => x.upcoming),
     };
     cache = { at: Date.now(), data, pending: null };
     return data;
@@ -589,6 +596,12 @@ function catalogFor(data, type, id) {
     return data.top10.items
       .filter((it) => it.list === list)
       .sort((a, b) => a.rank - b.rank) // theo thứ hạng Netflix
+      .filter(keep)
+      .map((it) => it.meta);
+  }
+  if (id.startsWith('netflix-upcoming-')) {
+    return [...data.upcoming]
+      .sort((a, b) => a.startTime - b.startTime) // sắp ra mắt sớm nhất trước
       .filter(keep)
       .map((it) => it.meta);
   }
@@ -656,7 +669,15 @@ async function handler(req, res) {
               tmdb: x.tmdb, imdb: x.meta?.id, reason: x.error, tried: x.tried,
             })),
         },
-        needsReview: [...d.items, ...d.top10.items].filter((x) => x.needsReview).map((x) => ({
+        upcoming: {
+          total: d.upcoming.length,
+          matched: d.upcoming.filter((x) => x.meta).length,
+          items: [...d.upcoming].sort((a, b) => a.startTime - b.startTime).map((x) => ({
+            title: x.title, date: vnDate(x.startTime), type: x.meta?.type || x.hint, netflixId: x.showId,
+            via: x.via, tmdb: x.tmdb, imdb: x.meta?.id, reason: x.error, tried: x.tried,
+          })),
+        },
+        needsReview: [...d.items, ...d.top10.items, ...d.upcoming].filter((x) => x.needsReview).map((x) => ({
           title: x.title, enTitle: x.enTitle, imdb: x.meta.id,
           tmdb: `https://www.themoviedb.org/${x.tmdb}`, netflix: titleUrl(x.showId),
         })),

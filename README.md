@@ -1,8 +1,9 @@
 # Mới trên Netflix (VN) – Stremio catalog addon
 
-Tạo 4 danh sách trong Stremio:
+Tạo 6 danh sách trong Stremio:
 
 - **Netflix: Phim mới**, **Netflix: Loạt phim mới**: từ https://about.netflix.com/vi/new-to-watch
+- **Netflix: Phim sắp ra mắt**, **Netflix: Loạt phim sắp ra mắt**: các tựa trong cùng danh sách "Mới trên Netflix" mà ngày ra mắt sau hôm nay, kèm ngày ra mắt
 - **Netflix: Top 10 phim Việt Nam**, **Netflix: Top 10 loạt phim Việt Nam**: bảng xếp hạng theo tuần của Netflix Tudum, https://www.netflix.com/tudum/top10/vietnam và https://www.netflix.com/tudum/top10/vietnam/tv
 
 Addon chỉ cung cấp danh sách. Bấm vào phim, Stremio dùng các addon stream bạn đã cài để phát.
@@ -24,6 +25,12 @@ Addon chỉ cung cấp danh sách. Bấm vào phim, Stremio dùng các addon str
    - **Không có trên Wikidata:** tìm TMDB bằng tên tiếng Việt và tiếng Anh (với Netflix Original chiếu lần đầu, tìm thêm một lượt lọc theo năm lên Netflix), xét toàn bộ 20 kết quả mỗi lượt, chấm điểm ứng viên theo loại, tên và ngày ra mắt so với ngày lên Netflix. Với Netflix Original chiếu lần đầu, ứng viên ra trước ngày lên Netflix hơn 1 năm bị loại. Với 3 ứng viên tốt nhất, đối chiếu đạo diễn và diễn viên với trang Netflix (+6 nếu trùng đạo diễn, +6 nếu trùng từ 2 diễn viên, −4 nếu không trùng ai), rồi lấy ứng viên tổng điểm cao nhất có IMDb ID.
    - Tựa không có IMDb ID sẽ bị bỏ (Stremio cần ID `tt...`).
 6. Kết quả được cache 6 giờ. Lần tải đầu mất khoảng 20–40 giây.
+
+### Sắp ra mắt
+
+1. Lấy từ cùng danh sách "Mới trên Netflix": các tựa có ngày ra mắt sau thời điểm làm mới dữ liệu. Danh sách này chỉ có các tựa trong tháng, nên dòng "Sắp ra mắt" cũng chỉ đến hết tháng.
+2. Đi qua đúng các bước như tựa đã ra mắt (trang phim, Wikidata, TMDB). Tựa chưa có IMDb ID (thường gặp với phim chưa ra mắt) sẽ không hiện.
+3. Xếp tựa ra mắt sớm nhất lên đầu, hiển thị dạng "Ra mắt 26/10/2026". Khi đến ngày ra mắt, tựa tự chuyển sang dòng phim mới ở lần làm mới kế tiếp (tối đa 6 giờ).
 
 ### Top 10 Việt Nam theo tuần
 
@@ -52,6 +59,7 @@ Mở `http://127.0.0.1:7000/debug.json` để kiểm tra:
 - `matchedItems`: mỗi tựa khớp với mã TMDB/IMDb nào, qua nguồn nào (`wikidata` hoặc `search`), và với `search` thì các ứng viên đã thử kèm điểm (`điểm 4+12` = điểm theo tên/ngày + điểm đối chiếu người).
 - `needsReview`: các tựa khớp theo tên mà không trùng đạo diễn hay diễn viên nào, kèm link TMDB và Netflix để kiểm tra tay.
 - `unmatched`: các tựa không khớp, kèm các ứng viên đã thử.
+- `upcoming`: các tựa sắp ra mắt, ngày ra mắt, và kết quả khớp của từng tựa.
 - `top10`: địa chỉ và lỗi (nếu có) của từng bảng (`lists`), tuần xếp hạng (`weekEnd`), số tựa khớp, và từng tựa theo thứ hạng kèm số tuần trong Top 10.
 
 ## Deploy lên Vercel

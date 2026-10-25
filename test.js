@@ -13,7 +13,10 @@ const page2 = {
     ...realPage2.data,
     { videoID: 900001, title1: 'Phim lẻ A', title2: 'Phim lẻ A', collection: 2694103, startTime: PAST },
     { videoID: 900002, title1: 'Trò chơi B', title2: 'Trò chơi B', collection: 81500273, startTime: PAST },
-    { videoID: 900003, title1: 'Tương lai C', title2: 'Mùa 1', startTime: Date.parse('2099-01-01') },
+    { videoID: 900003, title1: 'Tương lai C', title2: 'Mùa 1', startTime: Date.parse('2099-01-01T00:00:00+07:00') },
+    // Phim lẻ sắp ra mắt: cố ý xếp ngày muộn trước ngày sớm, để kiểm tra thứ tự "sớm nhất trước"
+    { videoID: 900005, title1: 'Tương lai E', title2: 'Tương lai E', collection: 2694103, startTime: Date.parse('2099-03-01T00:00:00+07:00') },
+    { videoID: 900006, title1: 'Tương lai D', title2: 'Tương lai D', collection: 2694103, startTime: Date.parse('2099-02-01T00:00:00+07:00') },
     page1.data[0], // trùng với trang 1
   ],
 };
@@ -267,10 +270,11 @@ function call(handler, path) {
   assert.strictEqual(man.headers['Access-Control-Allow-Origin'], '*');
   let dbg = (await call(h, '/debug.json')).body;
   assert.strictEqual(dbg.source, 'api');
-  // 20 (trang 1) + 20 thật + Phim lẻ A, Tương lai C (trang 2, bỏ trò chơi và tựa trùng) + 1 (trang 3)
-  assert.strictEqual(dbg.read, 43);
-  const future = [...page1.data, ...realPage2.data].filter((r) => r.startTime > Date.now()).length + 1; // + Tương lai C
-  assert.strictEqual(dbg.released, 43 - future);
+  // 20 (trang 1) + 20 thật + Phim lẻ A, Tương lai C, D, E (trang 2, bỏ trò chơi và tựa trùng) + 1 (trang 3)
+  assert.strictEqual(dbg.read, 45);
+  const future = [...page1.data, ...realPage2.data].filter((r) => r.startTime > Date.now()).length + 3; // + Tương lai C, D, E
+  assert.strictEqual(dbg.released, 45 - future);
+  assert.strictEqual(dbg.upcoming.total, future);
   assert.deepStrictEqual(dbg.unmatched.map((x) => x.title), ['Không có trên TMDB']);
 
   const series = (await call(h, '/catalog/series/netflix-new-series.json')).body.metas;
@@ -364,7 +368,30 @@ function call(handler, path) {
   // Danh sách phim mới không bị ảnh hưởng
   assert.ok(!movies.some((x) => x.releaseInfo.startsWith('#')));
   const man2 = (await call(h, '/manifest.json')).body;
-  assert.deepStrictEqual(man2.catalogs.map((c) => c.id), ['netflix-new-movie', 'netflix-new-series', 'netflix-top10-movie', 'netflix-top10-series']);
+  assert.deepStrictEqual(man2.catalogs.map((c) => c.id), [
+    'netflix-new-movie', 'netflix-new-series', 'netflix-top10-movie', 'netflix-top10-series', 'netflix-upcoming-movie', 'netflix-upcoming-series',
+  ]);
+
+  // Sắp ra mắt: chỉ tựa chưa ra mắt, sớm nhất trước, kèm ngày ra mắt
+  const upMovies = (await call(h, '/catalog/movie/netflix-upcoming-movie.json')).body.metas;
+  const upSeries = (await call(h, '/catalog/series/netflix-upcoming-series.json')).body.metas;
+  assert.deepStrictEqual(upMovies.filter((x) => x.name.startsWith('Tương lai')).map((x) => [x.name, x.releaseInfo]), [
+    ['Tương lai D', 'Ra mắt 01/02/2099'],
+    ['Tương lai E', 'Ra mắt 01/03/2099'],
+  ]);
+  assert.deepStrictEqual(upSeries.filter((x) => x.name === 'Tương lai C').map((x) => x.releaseInfo), ['Ra mắt 01/01/2099']);
+  assert.ok(upMovies.concat(upSeries).every((x) => x.releaseInfo.startsWith('Ra mắt ')));
+  const upDates = upMovies.map((x) => x.releaseInfo.slice(7, 17).split('/').reverse().join(''));
+  assert.deepStrictEqual(upDates, [...upDates].sort());
+  // Tựa sắp ra mắt không lẫn vào danh sách phim mới, tựa đã ra mắt không lẫn vào Sắp ra mắt
+  assert.ok(!movies.some((x) => x.name.startsWith('Tương lai')));
+  assert.ok(!upMovies.some((x) => x.name === 'Phim lẻ A'));
+  const upDbg = (await call(h, '/debug.json')).body.upcoming;
+  assert.deepStrictEqual(upDbg.items.filter((x) => x.title.startsWith('Tương lai')).map((x) => [x.title, x.date, x.type]), [
+    ['Tương lai C', '01/01/2099', 'series'],
+    ['Tương lai D', '01/02/2099', 'movie'],
+    ['Tương lai E', '01/03/2099', 'movie'],
+  ]);
 
   // Dạng request trên Vercel sau rewrite: /api/index?__path=<đường dẫn gốc>
   assert.strictEqual((await call(h, '/api/index?__path=')).body.id, 'community.netflix.newtowatch.vi');            // trang gốc /
