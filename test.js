@@ -36,8 +36,16 @@ const wdBindings = (ids) => WD_ROWS.filter((r) => ids.includes(r.netflix)).map((
   return b;
 });
 
+// Top 10 thật của trang chủ netflix.com/vn (chỉ có thứ hạng và mã)
+const homePage = fs.readFileSync(__dirname + '/fixtures/netflix-home-vn.html', 'utf8');
+const TOP10 = require('./api/index').parseTop10(homePage);
+const top10Type = new Map(TOP10.map((r) => [String(r.showId), r.type]));
+// Giả lập: Wikidata biết phim hạng 1
+WD_ROWS.push({ netflix: String(TOP10[0].showId), imdb: 'tt77777777', tmdbMovie: '777001' });
+
 let apiUp = true;
 let wdUp = true;
+let homeUp = true;
 let wdHeaders = null;
 const searches = [];
 global.fetch = async (url, opts = {}) => {
@@ -57,6 +65,14 @@ global.fetch = async (url, opts = {}) => {
     // "#Yêu" và "Cơn bão": Netflix Original chiếu lần đầu
     if (u.pathname === '/vn/title/81680909') return { ok: true, text: async () => fakeTitle({ type: 'Show', isOriginal: true, topLevelVideoId: 81680908 }) };
     if (u.pathname === '/vn/title/81786721') return { ok: true, text: async () => fakeTitle({ type: 'Movie', isOriginal: true, topLevelVideoId: 81786721 }) };
+    if (u.pathname === '/vn/' && homeUp === 'redirect') return { ok: true, url: 'https://www.netflix.com/us/', text: async () => homePage };
+    if (u.pathname === '/vn/') return homeUp ? { ok: true, url: 'https://www.netflix.com/vn/', text: async () => homePage } : { ok: false, status: 403, url: 'https://www.netflix.com/vn/' };
+    // Trang phim của các tựa trong Top 10: tên giả lập "Top10 <mã>"
+    const t10 = u.pathname.match(/^\/vn\/title\/(\d+)$/);
+    if (t10 && top10Type.has(t10[1])) {
+      const id = Number(t10[1]);
+      return { ok: true, text: async () => fakeTitle({ type: top10Type.get(t10[1]) === 'tv' ? 'Show' : 'Movie', videoId: id, topLevelVideoId: id }, { title: `Top10 ${id}` }) };
+    }
     if (u.pathname === '/vn/title/555') return { ok: true, url: 'https://www.netflix.com/vn/title/554?fromWatch=true', text: async () => fakeTitle({ type: 'Show' }) };
     return { ok: false, status: 404 };
   }
@@ -111,7 +127,9 @@ global.fetch = async (url, opts = {}) => {
       { id: 777, media_type: 'movie', title: 'Sống đời', release_date: '2027-06-01' }, // ra mắt sau: bị loại
     ] });
     const media = s[1] === 'multi' ? 'movie' : s[1];
-    return json({ results: [{ id: q.length * 1000 + q.charCodeAt(0), media_type: media, poster_path: '/p.jpg', overview: 'Mô tả' }] });
+    let hash = 7;
+    for (const ch of q) hash = (hash * 31 + ch.codePointAt(0)) % 9000000;
+    return json({ results: [{ id: 1000000 + hash, media_type: media, poster_path: '/p.jpg', overview: 'Mô tả' }] });
   }
   const e = u.pathname.match(/\/(movie|tv)\/(\d+)\/external_ids$/);
   if (e) return json({ imdb_id: e[2] === '1058827' ? null : `tt${e[2]}` });
@@ -119,8 +137,8 @@ global.fetch = async (url, opts = {}) => {
 };
 process.env.TMDB_API_KEY = 'testkey';
 
-function fakeTitle(metaData) {
-  return '<script>netflix.reactContext = {"models":{"nmTitleGQL":' + JSON.stringify({ data: { metaData, copy: {}, persons: {} } }) + '}};</script>';
+function fakeTitle(metaData, copy = {}) {
+  return '<script>netflix.reactContext = {"models":{"nmTitleGQL":' + JSON.stringify({ data: { metaData, copy, persons: {} } }) + '}};</script>';
 }
 
 function freshHandler() {
@@ -173,6 +191,13 @@ function call(handler, path) {
   assert.strictEqual((await h.fetchNetflixTitle(81720672)).topId, 81720671);
   assert.strictEqual((await h.fetchNetflixTitle(81720672)).type, 'tv');
   assert.strictEqual((await h.fetchNetflixTitle(555)).topId, 554); // không có topLevelVideoId: theo địa chỉ chuyển hướng
+
+  // Đọc Top 10 từ trang chủ thật
+  assert.strictEqual(TOP10.length, 20);
+  assert.deepStrictEqual(TOP10.filter((r) => r.type === 'movie').map((r) => r.rank), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  assert.deepStrictEqual(TOP10.find((r) => r.type === 'tv'), { type: 'tv', rank: 1, showId: 81663325, seasonId: 81663326 });
+  assert.strictEqual(h.parseTop10('<html></html>'), null);
+  assert.strictEqual(nf.title, 'Sống đời');
 
   // Đối chiếu người
   const crew = (d) => ({ crew: [{ job: 'Director', name: d }] });
@@ -283,6 +308,28 @@ function call(handler, path) {
   assert.deepStrictEqual((await call(h, '/catalog/movie/netflix-new-movie/skip=100.json')).body.metas, []);
   assert.strictEqual((await call(h, '/catalog/movie/khac.json')).status, 404);
 
+  // Top 10 Việt Nam
+  const topMovies = (await call(h, '/catalog/movie/netflix-top10-movie.json')).body.metas;
+  const topSeries = (await call(h, '/catalog/series/netflix-top10-series.json')).body.metas;
+  assert.strictEqual(topMovies.length, 10);
+  assert.strictEqual(topMovies[0].id, 'tt77777777');                       // hạng 1 qua Wikidata
+  assert.strictEqual(topMovies[0].name, `Top10 ${TOP10[0].showId}`);        // tên lấy từ trang phim
+  assert.deepStrictEqual(topMovies.map((x) => x.releaseInfo), Array.from({ length: 10 }, (_, i) => `#${i + 1} tại Việt Nam`));
+  // Loạt phim 81040344 có 2 mùa trong Top 10 (hạng 2 và 9): chỉ hiện một lần, ở hạng cao hơn
+  assert.strictEqual(topSeries.length, 9);
+  assert.strictEqual(topSeries[1].name, 'Top10 81040344');
+  assert.ok(!topSeries.slice(2).some((x) => x.name === 'Top10 81040344'));
+  assert.ok(topSeries.every((x) => x.type === 'series') && topMovies.every((x) => x.type === 'movie'));
+  const t10dbg = (await call(h, '/debug.json')).body.top10;
+  assert.strictEqual(t10dbg.total, 20);
+  assert.strictEqual(t10dbg.matched, 20);
+  assert.strictEqual(t10dbg.error, undefined);
+  assert.deepStrictEqual(t10dbg.items.slice(0, 2).map((x) => [x.list, x.rank, x.via]), [['movie', 1, 'wikidata'], ['movie', 2, 'search']]);
+  // Danh sách phim mới không bị ảnh hưởng
+  assert.ok(!movies.some((x) => x.releaseInfo.startsWith('#')));
+  const man2 = (await call(h, '/manifest.json')).body;
+  assert.deepStrictEqual(man2.catalogs.map((c) => c.id), ['netflix-new-movie', 'netflix-new-series', 'netflix-top10-movie', 'netflix-top10-series']);
+
   // Dạng request trên Vercel sau rewrite: /api/index?__path=<đường dẫn gốc>
   assert.strictEqual((await call(h, '/api/index?__path=')).body.id, 'community.netflix.newtowatch.vi');            // trang gốc /
   assert.strictEqual((await call(h, '/api/index?__path=manifest.json')).body.id, 'community.netflix.newtowatch.vi');
@@ -295,11 +342,22 @@ function call(handler, path) {
   // Kịch bản 2: API Netflix và Wikidata đều lỗi → đọc HTML (trang 1), tìm theo tên và chấm điểm
   apiUp = false;
   wdUp = false;
+  homeUp = false;
   h = freshHandler();
   dbg = (await call(h, '/debug.json')).body;
   assert.ok(dbg.source.startsWith('html'));
   assert.strictEqual(dbg.read, 20);
   assert.strictEqual(dbg.matchedViaWikidata, 0);
+  // Trang chủ Netflix lỗi: hai dòng Top 10 trống, có lý do; các dòng khác vẫn chạy
+  assert.deepStrictEqual((await call(h, '/catalog/movie/netflix-top10-movie.json')).body.metas, []);
+  assert.strictEqual(dbg.top10.error, 'Netflix 403');
+  assert.strictEqual(dbg.top10.total, 0);
+  // Bị chuyển sang trang Mỹ: báo lỗi, không hiện Top 10 của Mỹ
+  homeUp = 'redirect';
+  h = freshHandler();
+  const dbg3 = (await call(h, '/debug.json')).body;
+  assert.strictEqual(dbg3.top10.error, 'Netflix chuyển sang https://www.netflix.com/us/, không phải trang Việt Nam');
+  assert.deepStrictEqual((await call(h, '/catalog/series/netflix-top10-series.json')).body.metas, []);
   assert.ok((await call(h, '/catalog/series/netflix-new-series.json')).body.metas.length > 0);
   // "Sống đời": hai phim trùng tên, cùng đợt, đều có IMDb ID; chỉ đạo diễn/diễn viên phân biệt được
   const movies2 = (await call(h, '/catalog/movie/netflix-new-movie.json')).body.metas;
