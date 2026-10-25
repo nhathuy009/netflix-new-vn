@@ -1,4 +1,4 @@
-// Stremio catalog addon: "Mới trên Netflix" (about.netflix.com/vi/new-to-watch) và Top 10 Netflix Việt Nam (netflix.com/vn)
+// Stremio catalog addon: "Mới trên Netflix" (about.netflix.com/vi/new-to-watch) và Top 10 Netflix Việt Nam theo tuần (netflix.com/tudum/top10/vietnam)
 // Chỉ tạo danh sách (catalog). Không cung cấp nguồn phát.
 
 const NETFLIX = 'https://about.netflix.com';
@@ -15,9 +15,9 @@ const COLLECTION = { SERIES: 2170013, FILM: 2694103, SPECIALS: 2173907, GAMES: 8
 
 const manifest = {
   id: 'community.netflix.newtowatch.vi',
-  version: '1.4.0',
+  version: '1.5.0',
   name: 'Mới trên Netflix (VN)',
-  description: 'Phim và loạt phim mới lên Netflix Việt Nam (about.netflix.com/vi/new-to-watch) và Top 10 tại Việt Nam (netflix.com/vn)',
+  description: 'Phim và loạt phim mới lên Netflix Việt Nam (about.netflix.com/vi/new-to-watch) và Top 10 tuần tại Việt Nam (netflix.com/tudum/top10/vietnam)',
   resources: ['catalog'],
   types: ['movie', 'series'],
   idPrefixes: ['tt'],
@@ -166,44 +166,61 @@ async function fetchNetflixTitle(id) {
   }
 }
 
-// ---------- Top 10 tại Việt Nam (trang chủ netflix.com/vn) ----------
+// ---------- Top 10 tại Việt Nam theo tuần (Netflix Tudum) ----------
 
-const HOME_URL = 'https://www.netflix.com/vn/';
-// Trong top10Titles: moviesCountry / tvShowsCountry là bảng xếp hạng của quốc gia trên đường dẫn (/vn);
-// các danh mục *Global* là bảng xếp hạng toàn cầu
-const TOP10_LISTS = { movie: 'moviesCountry', tv: 'tvShowsCountry' };
+// Bảng xếp hạng chính thức theo tuần (thứ Hai đến Chủ nhật), cập nhật mỗi thứ Ba
+const TOP10_URLS = {
+  movie: 'https://www.netflix.com/tudum/top10/vietnam',
+  tv: 'https://www.netflix.com/tudum/top10/vietnam/tv',
+};
+const TOP10_CATEGORY = { movie: 'MOVIES', tv: 'SERIES' };
 
-// Mỗi mục chỉ có thứ hạng và mã; showTitleId là mã gốc (loạt phim), seasonTitleId là mã của mùa
-function parseTop10(html) {
-  const raw = extractObject(html, '"top10Titles":');
-  if (!raw) return null;
-  const value = JSON.parse(decodeJs(raw))?.value;
-  if (!value) return null;
-  const read = (list, type) => (list || [])
-    .map((x) => ({
+// Mỗi tựa có một khối "top10":{"__typename":"Top10Data",...} gồm thứ hạng tuần, số tuần trong Top 10,
+// ngày cuối tuần và mã Netflix (với loạt phim là mã của mùa). Trang lưu mỗi khối hai lần nên phải bỏ trùng.
+function parseTudumTop10(html, type) {
+  const key = '"top10":{"__typename":"Top10Data"';
+  const rows = new Map();
+  for (let k = html.indexOf(key); k >= 0; k = html.indexOf(key, k + key.length)) {
+    const raw = extractObject(html.slice(k), '"top10":');
+    if (!raw) continue;
+    let d;
+    try { d = JSON.parse(decodeJs(raw)); } catch { continue; }
+    if (d.category !== TOP10_CATEGORY[type] || !d.videoId || !d.weeklyRank) continue;
+    rows.set(d.videoId, {
       type,
-      rank: Number(x.fields?.contentRank?.value),
-      showId: Number(x.fields?.showTitleId?.value),
-      seasonId: Number(x.fields?.seasonTitleId?.value) || null,
-    }))
-    .filter((x) => x.rank && x.showId)
-    .sort((a, b) => a.rank - b.rank);
-  return [...read(value[TOP10_LISTS.movie], 'movie'), ...read(value[TOP10_LISTS.tv], 'tv')];
+      rank: Number(d.weeklyRank),
+      showId: Number(d.videoId),
+      weeks: Number(d.cumulativeWeeksInTop10) || null,
+      weekEnd: d.weekEndDate || null,
+    });
+  }
+  return [...rows.values()].sort((a, b) => a.rank - b.rank).slice(0, 10);
 }
 
-// Lỗi thì trả danh sách rỗng kèm lý do: hai dòng Top 10 trống, các dòng khác vẫn chạy
-async function fetchTop10() {
+// Một bảng lỗi thì chỉ dòng đó trống, kèm lý do; các dòng khác vẫn chạy
+async function fetchTop10List(type) {
+  const url = TOP10_URLS[type];
   try {
-    const r = await fetch(HOME_URL, { headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'text/html', 'Accept-Language': LANG } });
-    if (!r.ok) return { url: r.url, error: `Netflix ${r.status}`, rows: [] };
-    // Bị chuyển sang trang nước khác thì bảng "Country" là của nước đó: báo lỗi, không hiện sai
-    if (r.url && !/netflix\.com\/vn(\/|-|$)/.test(r.url)) return { url: r.url, error: `Netflix chuyển sang ${r.url}, không phải trang Việt Nam`, rows: [] };
-    const rows = parseTop10(await r.text());
-    if (!rows?.length) return { url: r.url, error: 'không thấy top10Titles trong trang chủ', rows: [] };
-    return { url: r.url, rows };
+    const r = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'text/html', 'Accept-Language': 'en' } });
+    if (!r.ok) return { url: r.url || url, error: `Netflix ${r.status}`, rows: [] };
+    // Bị chuyển sang trang nước khác thì là bảng xếp hạng của nước đó: báo lỗi, không hiện sai
+    if (r.url && !/\/tudum\/top10\/vietnam(\/|$|\?)/.test(r.url)) {
+      return { url: r.url, error: `Netflix chuyển sang ${r.url}, không phải trang Việt Nam`, rows: [] };
+    }
+    const rows = parseTudumTop10(await r.text(), type);
+    if (!rows.length) return { url: r.url || url, error: 'không thấy dữ liệu Top10Data trong trang', rows: [] };
+    return { url: r.url || url, rows };
   } catch (e) {
-    return { error: e.message, rows: [] };
+    return { url, error: e.message, rows: [] };
   }
+}
+
+async function fetchTop10() {
+  const [movie, tv] = await Promise.all([fetchTop10List('movie'), fetchTop10List('tv')]);
+  return {
+    lists: { movie: { url: movie.url, error: movie.error }, tv: { url: tv.url, error: tv.error } },
+    rows: [...movie.rows, ...tv.rows],
+  };
 }
 
 // Chạy fn cho từng phần tử, mỗi lần 10 cái song song
@@ -331,7 +348,11 @@ function withMeta(item, { imdb, mediaType, details, via }) {
       poster: details?.poster_path ? `https://image.tmdb.org/t/p/w342${details.poster_path}` : item.image,
       background: details?.backdrop_path ? `https://image.tmdb.org/t/p/w1280${details.backdrop_path}` : nf?.background || item.image,
       description: desc || undefined,
-      releaseInfo: `${item.rank ? `#${item.rank} tại Việt Nam` : `Lên Netflix ${vnDate(item.startTime)}`}${nf?.isOriginal ? ' · Netflix Original' : ''}`,
+      releaseInfo: [
+        item.rank ? `#${item.rank} tại Việt Nam` : `Lên Netflix ${vnDate(item.startTime)}`,
+        item.weeks ? `${item.weeks} tuần trong Top 10` : null,
+        nf?.isOriginal ? 'Netflix Original' : null,
+      ].filter(Boolean).join(' · '),
       links: nf
         ? [...links('Genres', nf.genres), ...links('Directors', nf.directors.length ? nf.directors : nf.creators), ...links('Cast', nf.cast.slice(0, 5))]
         : undefined,
@@ -455,7 +476,7 @@ async function fetchWikidata(netflixIds) {
   try {
     const url = `${WIKIDATA}?format=json&query=${encodeURIComponent(wikidataQuery(netflixIds))}`;
     const r = await fetch(url, {
-      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.4.0 (Stremio catalog addon)' },
+      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.5.0 (Stremio catalog addon)' },
     });
     if (!r.ok) throw new Error(`Wikidata ${r.status}`);
     return parseWikidata(await r.json());
@@ -493,6 +514,8 @@ async function load() {
     const topItems = top10.rows.map((r, i) => ({
       list: r.type,
       rank: r.rank,
+      weeks: r.weeks,
+      weekEnd: r.weekEnd,
       netflixId: r.showId,
       showId: topPages[i]?.topId || r.showId,
       title: topPages[i]?.title,
@@ -511,7 +534,7 @@ async function load() {
     const data = {
       fetchedAt: new Date().toISOString(), source, totalItems, read: items.length, released: released.length,
       netflixPages: pages.filter(Boolean).length, wikidata: wikidata.size, items: resolved,
-      top10: { url: top10.url, error: top10.error, items: [...topResolved, ...topFailed] },
+      top10: { lists: top10.lists, items: [...topResolved, ...topFailed] },
     };
     cache = { at: Date.now(), data, pending: null };
     return data;
@@ -582,14 +605,14 @@ async function handler(req, res) {
         matchedViaWikidata: d.items.filter((x) => x.via === 'wikidata').length,
         matchedItems: d.items.filter((x) => x.meta).map((x) => ({ title: x.title, via: x.via, tmdb: x.tmdb, imdb: x.meta.id, tried: x.tried })),
         top10: {
-          url: d.top10.url,
-          error: d.top10.error,
+          lists: d.top10.lists,
+          weekEnd: d.top10.items.find((x) => x.weekEnd)?.weekEnd,
           matched: d.top10.items.filter((x) => x.meta).length,
           total: d.top10.items.length,
           items: [...d.top10.items]
             .sort((a, b) => a.list.localeCompare(b.list) || a.rank - b.rank)
             .map((x) => ({
-              list: x.list, rank: x.rank, title: x.title, netflixId: x.showId, via: x.via,
+              list: x.list, rank: x.rank, weeks: x.weeks, title: x.title, netflixId: x.showId, via: x.via,
               tmdb: x.tmdb, imdb: x.meta?.id, reason: x.error, tried: x.tried,
             })),
         },
@@ -620,4 +643,4 @@ module.exports.peopleScore = peopleScore;
 module.exports.isLaterSeason = isLaterSeason;
 module.exports.fetchNetflixTitle = fetchNetflixTitle;
 module.exports.searchYears = searchYears;
-module.exports.parseTop10 = parseTop10;
+module.exports.parseTudumTop10 = parseTudumTop10;

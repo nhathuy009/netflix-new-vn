@@ -37,15 +37,16 @@ const wdBindings = (ids) => WD_ROWS.filter((r) => ids.includes(r.netflix)).map((
 });
 
 // Top 10 thật của trang chủ netflix.com/vn (chỉ có thứ hạng và mã)
-const homePage = fs.readFileSync(__dirname + '/fixtures/netflix-home-vn.html', 'utf8');
-const TOP10 = require('./api/index').parseTop10(homePage);
+// Top 10 tuần thật của Netflix Tudum tại Việt Nam (tuần đến 18/10/2026), chỉ gồm các khối Top10Data
+const tudumMovies = fs.readFileSync(__dirname + '/fixtures/tudum-top10-vietnam-movies.html', 'utf8');
+const tudumTv = fs.readFileSync(__dirname + '/fixtures/tudum-top10-vietnam-tv.html', 'utf8');
+const { parseTudumTop10 } = require('./api/index');
+const TOP10 = [...parseTudumTop10(tudumMovies, 'movie'), ...parseTudumTop10(tudumTv, 'tv')];
 const top10Type = new Map(TOP10.map((r) => [String(r.showId), r.type]));
-// Giả lập: Wikidata biết phim hạng 1
-WD_ROWS.push({ netflix: String(TOP10[0].showId), imdb: 'tt77777777', tmdbMovie: '777001' });
 
 let apiUp = true;
 let wdUp = true;
-let homeUp = true;
+let top10Up = true;
 let wdHeaders = null;
 const searches = [];
 global.fetch = async (url, opts = {}) => {
@@ -65,8 +66,12 @@ global.fetch = async (url, opts = {}) => {
     // "#Yêu" và "Cơn bão": Netflix Original chiếu lần đầu
     if (u.pathname === '/vn/title/81680909') return { ok: true, text: async () => fakeTitle({ type: 'Show', isOriginal: true, topLevelVideoId: 81680908 }) };
     if (u.pathname === '/vn/title/81786721') return { ok: true, text: async () => fakeTitle({ type: 'Movie', isOriginal: true, topLevelVideoId: 81786721 }) };
-    if (u.pathname === '/vn/' && homeUp === 'redirect') return { ok: true, url: 'https://www.netflix.com/us/', text: async () => homePage };
-    if (u.pathname === '/vn/') return homeUp ? { ok: true, url: 'https://www.netflix.com/vn/', text: async () => homePage } : { ok: false, status: 403, url: 'https://www.netflix.com/vn/' };
+    const tudum = { '/tudum/top10/vietnam': tudumMovies, '/tudum/top10/vietnam/tv': tudumTv }[u.pathname];
+    if (tudum) {
+      if (top10Up === 'redirect') return { ok: true, url: 'https://www.netflix.com/tudum/top10/united-states', text: async () => tudum };
+      if (!top10Up) return { ok: false, status: 403, url: String(url) };
+      return { ok: true, url: String(url), text: async () => tudum };
+    }
     // Trang phim của các tựa trong Top 10: tên giả lập "Top10 <mã>"
     const t10 = u.pathname.match(/^\/vn\/title\/(\d+)$/);
     if (t10 && top10Type.has(t10[1])) {
@@ -193,10 +198,12 @@ function call(handler, path) {
   assert.strictEqual((await h.fetchNetflixTitle(555)).topId, 554); // không có topLevelVideoId: theo địa chỉ chuyển hướng
 
   // Đọc Top 10 từ trang chủ thật
-  assert.strictEqual(TOP10.length, 20);
+  assert.strictEqual(TOP10.length, 20); // mỗi khối có hai bản trong trang: đã bỏ trùng
   assert.deepStrictEqual(TOP10.filter((r) => r.type === 'movie').map((r) => r.rank), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-  assert.deepStrictEqual(TOP10.find((r) => r.type === 'tv'), { type: 'tv', rank: 1, showId: 81663325, seasonId: 81663326 });
-  assert.strictEqual(h.parseTop10('<html></html>'), null);
+  assert.deepStrictEqual(TOP10.find((r) => r.type === 'tv'), { type: 'tv', rank: 1, showId: 82682380, weeks: 2, weekEnd: '2026-10-18' });
+  assert.strictEqual(TOP10.find((r) => r.type === 'movie' && r.rank === 7).weeks, 84);
+  assert.deepStrictEqual(h.parseTudumTop10(tudumTv, 'movie'), []); // trang loạt phim không có khối MOVIES
+  assert.deepStrictEqual(h.parseTudumTop10('<html></html>', 'movie'), []);
   assert.strictEqual(nf.title, 'Sống đời');
 
   // Đối chiếu người
@@ -283,7 +290,7 @@ function call(handler, path) {
   assert.strictEqual(dbg.matchedViaWikidata, 5);
 
   // Metadata từ trang phim Netflix
-  assert.strictEqual(dbg.netflixPages, 4); // Sống đời, Cái bẫy, #Yêu, Cơn bão
+  assert.strictEqual(dbg.netflixPages, 9); // Sống đời, Cái bẫy, #Yêu, Cơn bão + 5 tựa cũng nằm trong Top 10 tuần
   assert.ok(song.description.startsWith('Người mẹ đơn thân'));   // mô tả tiếng Việt của Netflix
   assert.ok(song.releaseInfo.endsWith('· Netflix Original'));
   assert.deepStrictEqual(song.links.filter((l) => l.category === 'Directors').map((l) => l.name), ['Tyler Perry']);
@@ -312,18 +319,23 @@ function call(handler, path) {
   const topMovies = (await call(h, '/catalog/movie/netflix-top10-movie.json')).body.metas;
   const topSeries = (await call(h, '/catalog/series/netflix-top10-series.json')).body.metas;
   assert.strictEqual(topMovies.length, 10);
-  assert.strictEqual(topMovies[0].id, 'tt77777777');                       // hạng 1 qua Wikidata
-  assert.strictEqual(topMovies[0].name, `Top10 ${TOP10[0].showId}`);        // tên lấy từ trang phim
-  assert.deepStrictEqual(topMovies.map((x) => x.releaseInfo), Array.from({ length: 10 }, (_, i) => `#${i + 1} tại Việt Nam`));
-  // Loạt phim 81040344 có 2 mùa trong Top 10 (hạng 2 và 9): chỉ hiện một lần, ở hạng cao hơn
-  assert.strictEqual(topSeries.length, 9);
-  assert.strictEqual(topSeries[1].name, 'Top10 81040344');
-  assert.ok(!topSeries.slice(2).some((x) => x.name === 'Top10 81040344'));
+  // Hạng 1 là "Bản năng thú" (81757047): khớp qua Wikidata thật, cùng IMDb ID với mục trong danh sách phim mới
+  assert.strictEqual(topMovies[0].id, 'tt31049299');
+  assert.strictEqual(topMovies[0].name, 'Top10 81757047');                 // tên lấy từ trang phim
+  assert.ok(topMovies.every((x, i) => x.releaseInfo.startsWith(`#${i + 1} tại Việt Nam · `)));
+  assert.strictEqual(topMovies[6].releaseInfo, '#7 tại Việt Nam · 84 tuần trong Top 10');
+  assert.strictEqual(topSeries.length, 10);
+  assert.strictEqual(topSeries[0].name, 'Top10 82682380');
   assert.ok(topSeries.every((x) => x.type === 'series') && topMovies.every((x) => x.type === 'movie'));
   const t10dbg = (await call(h, '/debug.json')).body.top10;
   assert.strictEqual(t10dbg.total, 20);
   assert.strictEqual(t10dbg.matched, 20);
-  assert.strictEqual(t10dbg.error, undefined);
+  assert.deepStrictEqual(t10dbg.lists, {
+    movie: { url: 'https://www.netflix.com/tudum/top10/vietnam' }, // không có trường error
+    tv: { url: 'https://www.netflix.com/tudum/top10/vietnam/tv' },
+  });
+  assert.strictEqual(t10dbg.weekEnd, '2026-10-18');
+  assert.strictEqual(t10dbg.items[6].weeks, 84);
   assert.deepStrictEqual(t10dbg.items.slice(0, 2).map((x) => [x.list, x.rank, x.via]), [['movie', 1, 'wikidata'], ['movie', 2, 'search']]);
   // Danh sách phim mới không bị ảnh hưởng
   assert.ok(!movies.some((x) => x.releaseInfo.startsWith('#')));
@@ -342,21 +354,22 @@ function call(handler, path) {
   // Kịch bản 2: API Netflix và Wikidata đều lỗi → đọc HTML (trang 1), tìm theo tên và chấm điểm
   apiUp = false;
   wdUp = false;
-  homeUp = false;
+  top10Up = false;
   h = freshHandler();
   dbg = (await call(h, '/debug.json')).body;
   assert.ok(dbg.source.startsWith('html'));
   assert.strictEqual(dbg.read, 20);
   assert.strictEqual(dbg.matchedViaWikidata, 0);
-  // Trang chủ Netflix lỗi: hai dòng Top 10 trống, có lý do; các dòng khác vẫn chạy
+  // Trang Top 10 lỗi: hai dòng Top 10 trống, có lý do; các dòng khác vẫn chạy
   assert.deepStrictEqual((await call(h, '/catalog/movie/netflix-top10-movie.json')).body.metas, []);
-  assert.strictEqual(dbg.top10.error, 'Netflix 403');
+  assert.strictEqual(dbg.top10.lists.movie.error, 'Netflix 403');
+  assert.strictEqual(dbg.top10.lists.tv.error, 'Netflix 403');
   assert.strictEqual(dbg.top10.total, 0);
-  // Bị chuyển sang trang Mỹ: báo lỗi, không hiện Top 10 của Mỹ
-  homeUp = 'redirect';
+  // Bị chuyển sang trang nước khác: báo lỗi, không hiện Top 10 của nước đó
+  top10Up = 'redirect';
   h = freshHandler();
   const dbg3 = (await call(h, '/debug.json')).body;
-  assert.strictEqual(dbg3.top10.error, 'Netflix chuyển sang https://www.netflix.com/us/, không phải trang Việt Nam');
+  assert.strictEqual(dbg3.top10.lists.tv.error, 'Netflix chuyển sang https://www.netflix.com/tudum/top10/united-states, không phải trang Việt Nam');
   assert.deepStrictEqual((await call(h, '/catalog/series/netflix-top10-series.json')).body.metas, []);
   assert.ok((await call(h, '/catalog/series/netflix-new-series.json')).body.metas.length > 0);
   // "Sống đời": hai phim trùng tên, cùng đợt, đều có IMDb ID; chỉ đạo diễn/diễn viên phân biệt được

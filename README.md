@@ -3,7 +3,7 @@
 Tạo 4 danh sách trong Stremio:
 
 - **Netflix: Phim mới**, **Netflix: Loạt phim mới**: từ https://about.netflix.com/vi/new-to-watch
-- **Netflix: Top 10 phim Việt Nam**, **Netflix: Top 10 loạt phim Việt Nam**: bảng xếp hạng trên trang chủ https://www.netflix.com/vn/
+- **Netflix: Top 10 phim Việt Nam**, **Netflix: Top 10 loạt phim Việt Nam**: bảng xếp hạng theo tuần của Netflix Tudum, https://www.netflix.com/tudum/top10/vietnam và https://www.netflix.com/tudum/top10/vietnam/tv
 
 Addon chỉ cung cấp danh sách. Bấm vào phim, Stremio dùng các addon stream bạn đã cài để phát.
 
@@ -25,12 +25,13 @@ Addon chỉ cung cấp danh sách. Bấm vào phim, Stremio dùng các addon str
    - Tựa không có IMDb ID sẽ bị bỏ (Stremio cần ID `tt...`).
 6. Kết quả được cache 6 giờ. Lần tải đầu mất khoảng 20–40 giây.
 
-### Top 10 Việt Nam
+### Top 10 Việt Nam theo tuần
 
-1. Đọc khối `top10Titles` trong trang chủ `netflix.com/vn/`, lấy danh mục `moviesCountry` và `tvShowsCountry` (bảng xếp hạng tại Việt Nam). Mỗi mục chỉ có thứ hạng và mã Netflix.
-2. Đọc trang phim của từng mã để lấy tên, loại, đạo diễn, diễn viên, mô tả; rồi tìm IMDb ID như danh sách phim mới (Wikidata trước, sau đó tìm TMDB).
-3. Xếp theo thứ hạng Netflix. Một loạt phim có nhiều mùa cùng lọt Top 10 chỉ hiện một lần, ở hạng cao nhất.
-4. Trang chủ lỗi, hoặc Netflix chuyển sang trang nước khác: hai dòng Top 10 trống và `/debug.json` ghi lý do; hai dòng phim mới vẫn chạy.
+1. Đọc hai trang Netflix Tudum (phim lẻ và loạt phim). Bảng xếp hạng tính theo tuần thứ Hai đến Chủ nhật, cập nhật mỗi thứ Ba.
+2. Mỗi tựa có một khối `Top10Data`: thứ hạng tuần (`weeklyRank`), số tuần trong Top 10 (`cumulativeWeeksInTop10`), ngày cuối tuần (`weekEndDate`) và mã Netflix (`videoId`; với loạt phim là mã của mùa). Trang lưu mỗi khối hai lần, addon bỏ bản trùng.
+3. Đọc trang phim của từng mã để lấy tên, loại, mã gốc, đạo diễn, diễn viên, mô tả; rồi tìm IMDb ID như danh sách phim mới (Wikidata trước, sau đó tìm TMDB).
+4. Xếp theo thứ hạng Netflix, hiển thị dạng "#4 tại Việt Nam · 20 tuần trong Top 10". Một loạt phim có nhiều mùa cùng lọt Top 10 chỉ hiện một lần, ở hạng cao nhất.
+5. Trang Top 10 lỗi, hoặc Netflix chuyển sang trang nước khác: dòng tương ứng trống và `/debug.json` ghi lý do; các dòng khác vẫn chạy.
 
 ## Chạy thử trên máy
 
@@ -47,7 +48,7 @@ Mở `http://127.0.0.1:7000/debug.json` để kiểm tra:
 - `matchedItems`: mỗi tựa khớp với mã TMDB/IMDb nào, qua nguồn nào (`wikidata` hoặc `search`), và với `search` thì các ứng viên đã thử kèm điểm (`điểm 4+12` = điểm theo tên/ngày + điểm đối chiếu người).
 - `needsReview`: các tựa khớp theo tên mà không trùng đạo diễn hay diễn viên nào, kèm link TMDB và Netflix để kiểm tra tay.
 - `unmatched`: các tựa không khớp, kèm các ứng viên đã thử.
-- `top10`: địa chỉ trang chủ đã đọc (`url`), lỗi nếu có, số tựa khớp, và từng tựa theo thứ hạng.
+- `top10`: địa chỉ và lỗi (nếu có) của từng bảng (`lists`), tuần xếp hạng (`weekEnd`), số tựa khớp, và từng tựa theo thứ hạng kèm số tuần trong Top 10.
 
 ## Deploy lên Vercel
 
