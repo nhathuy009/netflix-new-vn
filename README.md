@@ -28,10 +28,11 @@ Addon chỉ cung cấp danh sách. Bấm vào phim, Stremio dùng các addon str
 ### Top 10 Việt Nam theo tuần
 
 1. Đọc hai trang Netflix Tudum (phim lẻ và loạt phim). Bảng xếp hạng tính theo tuần thứ Hai đến Chủ nhật, cập nhật mỗi thứ Ba.
-2. Mỗi tựa có một khối `Top10Data`: thứ hạng tuần (`weeklyRank`), số tuần trong Top 10 (`cumulativeWeeksInTop10`), ngày cuối tuần (`weekEndDate`) và mã Netflix (`videoId`; với loạt phim là mã của mùa). Trang lưu mỗi khối hai lần, addon bỏ bản trùng.
-3. Đọc trang phim của từng mã để lấy tên, loại, mã gốc, đạo diễn, diễn viên, mô tả; rồi tìm IMDb ID như danh sách phim mới (Wikidata trước, sau đó tìm TMDB).
-4. Xếp theo thứ hạng Netflix, hiển thị dạng "#4 tại Việt Nam · 20 tuần trong Top 10". Một loạt phim có nhiều mùa cùng lọt Top 10 chỉ hiện một lần, ở hạng cao nhất.
-5. Trang Top 10 lỗi, hoặc Netflix chuyển sang trang nước khác: dòng tương ứng trống và `/debug.json` ghi lý do; các dòng khác vẫn chạy.
+2. Mỗi tựa có một khối `Top10Data`: thứ hạng tuần (`weeklyRank`), số tuần trong Top 10 (`cumulativeWeeksInTop10`), ngày cuối tuần (`weekEndDate`) và `videoId`. Trang lưu mỗi khối hai lần, addon bỏ bản trùng.
+3. Với loạt phim, `videoId` là mã của **mùa**. Mã của cả loạt phim lấy từ nút Watch trong thẻ phim (`<li data-entity-id="top10-…-<videoId>">`), không dựa vào việc Netflix chuyển trang mùa sang trang loạt phim (có mùa không chuyển được). Thẻ phim cũng có tên tiếng Anh, dùng khi tìm TMDB.
+4. Đọc trang phim theo mã loạt phim để lấy tên tiếng Việt, loại, đạo diễn, diễn viên, mô tả; rồi tìm IMDb ID như danh sách phim mới (Wikidata trước, sau đó tìm TMDB). Không đọc được trang phim thì dùng tên tiếng Anh trong thẻ để hiển thị và tìm, và đưa tựa đó vào `needsReview`.
+5. Xếp theo thứ hạng Netflix, hiển thị dạng "#4 tại Việt Nam · 20 tuần trong Top 10". Một loạt phim có nhiều mùa cùng lọt Top 10 chỉ hiện một lần, ở hạng cao nhất.
+6. Trang Top 10 lỗi, hoặc Netflix chuyển sang trang nước khác: dòng tương ứng trống và `/debug.json` ghi lý do; các dòng khác vẫn chạy.
 
 ## Chạy thử trên máy
 
