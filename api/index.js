@@ -184,8 +184,15 @@ function send(res, status, body, cacheSeconds = 0) {
   res.end(JSON.stringify(body));
 }
 
+// Trên Vercel, req.url là đường dẫn sau rewrite (/api/index); đường dẫn gốc nằm ở ?__path= (xem vercel.json)
+function getPath(req) {
+  const u = new URL(req.url, 'http://x');
+  const p = u.searchParams.get('__path');
+  return p !== null ? '/' + p.replace(/^\/+/, '') : u.pathname;
+}
+
 async function handler(req, res) {
-  const path = new URL(req.url, 'http://x').pathname;
+  const path = getPath(req);
   try {
     if (path === '/' || path === '/manifest.json') return send(res, 200, manifest, 86400);
 
@@ -211,7 +218,7 @@ async function handler(req, res) {
       });
     }
 
-    return send(res, 404, { error: 'not found' });
+    return send(res, 404, { error: 'not found', path, url: req.url });
   } catch (e) {
     return send(res, 500, { error: e.message });
   }
