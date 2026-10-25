@@ -15,7 +15,7 @@ const COLLECTION = { SERIES: 2170013, FILM: 2694103, SPECIALS: 2173907, GAMES: 8
 
 const manifest = {
   id: 'community.netflix.newtowatch.vi',
-  version: '1.7.2',
+  version: '1.8.0',
   name: 'Mới trên Netflix (VN)',
   description: 'Phim và loạt phim mới và sắp ra mắt trên Netflix Việt Nam (about.netflix.com/vi/new-to-watch), Top 10 tuần tại Việt Nam (netflix.com/tudum/top10/vietnam)',
   // meta: trang chi tiết tiếng Việt (mô tả, danh sách tập) cho các phim trong danh sách của addon.
@@ -210,8 +210,26 @@ function parseNetflixShow(html, wantId) {
       firstSeasonKeys: Object.keys(sh.seasons?.edges?.[0]?.node || {}),
     })),
     matched: !!show,
+    episodeCards: (html.match(/data-uia="episode-card"/g) || []).length,
   };
-  if (!show) return { showDiag };
+  if (!show) {
+    // Dự phòng: thẻ HTML danh sách tập (<li data-uia="episode-card">). Thẻ không ghi số mùa, nên chỉ dùng cho
+    // loạt phim một mùa; gán nhầm mùa thì addon stream sẽ tìm nhầm tập.
+    const own = candidates.find((sh) => Number(sh.videoId) === Number(wantId)) || {};
+    const label = nfc(own.numSeasonsLabel || '');
+    const singleSeason = /ngắn|limited|^\s*1\s/i.test(label);
+    const cards = singleSeason ? parseEpisodeCards(html) : [];
+    showDiag.numSeasonsLabel = label || undefined;
+    if (!cards.length) return { showDiag };
+    showDiag.source = 'html';
+    return {
+      seasons: [{ number: 1, episodes: cards }],
+      availableFrom: own.availabilityStartTime || undefined,
+      year: Number(own.latestYear) || undefined,
+      showDiag,
+    };
+  }
+  showDiag.source = 'json';
   const seasons = (show.seasons?.edges || []).map((se, i) => {
     const node = se?.node || {};
     return {
@@ -236,17 +254,90 @@ function parseNetflixShow(html, wantId) {
   };
 }
 
-// Lỗi hoặc bị chặn thì trả null: addon vẫn chạy với dữ liệu từ trang danh sách
-async function fetchNetflixTitle(id) {
+const decodeHtml = (s) => s
+  .replace(/<[^>]+>/g, '')
+  .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+  .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+  .replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ')
+  .replace(/&amp;/g, '&')
+  .trim();
+
+// "1h 6ph" / "45ph" / "1h" → giây
+function parseRuntime(text) {
+  const h = Number(text.match(/(\d+)\s*h/)?.[1] || 0);
+  const m = Number(text.match(/(\d+)\s*ph/)?.[1] || 0);
+  return h || m ? (h * 60 + m) * 60 : undefined;
+}
+
+// Thẻ tập: tiêu đề "<số>. <tên tập>" (p data-uia="episode-title"), tóm tắt ở thẻ <p> kế tiếp, thời lượng, ảnh
+function parseEpisodeCards(html) {
+  const out = [];
+  const re = /<li\b[^>]*data-uia="episode-card"[^>]*>([\s\S]*?)<\/li>/g;
+  let m;
+  while ((m = re.exec(html))) {
+    const li = m[1];
+    const head = li.match(/<p\b[^>]*data-uia="episode-title"[^>]*>([\s\S]*?)<\/p>/);
+    const t = head && decodeHtml(head[1]).match(/^(\d+)\.\s*(.*)$/);
+    if (!t) continue;
+    const after = li.slice(head.index + head[0].length);
+    const synopsis = after.match(/<p\b[^>]*>([\s\S]*?)<\/p>/);
+    const runtime = li.match(/>(\d+\s*h(?:\s*\d+\s*ph)?|\d+\s*ph)</);
+    const img = li.match(/<img\b[^>]*src="([^"]+)"/);
+    out.push({
+      number: Number(t[1]),
+      title: nfc(t[2]) || undefined,
+      synopsis: synopsis ? nfc(decodeHtml(synopsis[1])) || undefined : undefined,
+      runtime: runtime ? parseRuntime(runtime[1]) : undefined,
+      still: img ? decodeHtml(img[1]) : undefined,
+    });
+  }
+  // Trang có thể lặp danh sách (bản cho điện thoại và máy tính): giữ mỗi số tập một lần
+  return [...new Map(out.map((e) => [e.number, e])).values()].sort((a, b) => a.number - b.number);
+}
+
+// Gửi header như trình duyệt thật: chuỗi User-Agent cụt dễ bị coi là máy và nhận phiên bản trang khác
+const BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.6,en;q=0.5',
+};
+const TITLE_TIMEOUT_MS = 20000;
+const TITLE_RETRY_MS = Number(process.env.NETFLIX_RETRY_MS ?? 2000);
+// Trang phim đọc được lần gần nhất (theo mã), dùng tạm khi lần này lỗi; và lý do lỗi gần nhất.
+// Lưu trong bộ nhớ của máy chủ: mất khi Vercel khởi động lại máy chủ.
+const titleCache = new Map();
+const titleErrors = new Map();
+
+async function fetchTitleOnce(id) {
   try {
-    const r = await fetch(titleUrl(id), { headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'text/html', 'Accept-Language': LANG } });
-    if (!r.ok) return null;
+    const r = await fetch(titleUrl(id), { headers: BROWSER_HEADERS, signal: AbortSignal.timeout(TITLE_TIMEOUT_MS) });
+    if (!r.ok) return { error: `HTTP ${r.status}` };
     // Trang không ghi topLevelVideoId thì lấy mã trong địa chỉ sau khi Netflix chuyển hướng (…/title/<mã gốc>)
     const redirected = Number((r.url || '').match(/\/title\/(\d+)/)?.[1]) || null;
-    return parseNetflixTitle(await r.text(), redirected);
-  } catch {
-    return null;
+    const html = await r.text();
+    const nf = parseNetflixTitle(html, redirected);
+    return nf ? { nf } : { error: `không có dữ liệu phim trong trang (${html.length} byte)` };
+  } catch (e) {
+    return { error: e?.name === 'TimeoutError' ? `quá ${TITLE_TIMEOUT_MS / 1000} giây` : e?.message || String(e) };
   }
+}
+
+// Thử lại một lần khi lỗi. Vẫn lỗi thì dùng trang đọc được lần trước (đánh dấu stale) thay vì bỏ trắng,
+// vì thiếu trang phim thì mất loại phim, cờ Netflix Original, diễn viên, và có thể khớp nhầm phim.
+async function fetchNetflixTitle(id) {
+  let res = await fetchTitleOnce(id);
+  if (res.error) {
+    if (TITLE_RETRY_MS) await new Promise((r) => setTimeout(r, TITLE_RETRY_MS));
+    res = await fetchTitleOnce(id);
+  }
+  if (res.nf) {
+    titleCache.set(String(id), res.nf);
+    titleErrors.delete(String(id));
+    return res.nf;
+  }
+  titleErrors.set(String(id), res.error);
+  const old = titleCache.get(String(id));
+  return old ? { ...old, stale: true } : null;
 }
 
 // ---------- Top 10 tại Việt Nam theo tuần (Netflix Tudum) ----------
@@ -340,6 +431,8 @@ async function fetchTop10() {
     rows: [...movie.rows, ...tv.rows],
   };
 }
+
+const TITLE_BATCH = 5;
 
 // Chạy fn cho từng phần tử, mỗi lần 10 cái song song
 async function mapInBatches(items, fn, size = 10) {
@@ -596,7 +689,7 @@ async function fetchWikidata(netflixIds) {
   try {
     const url = `${WIKIDATA}?format=json&query=${encodeURIComponent(wikidataQuery(netflixIds))}`;
     const r = await fetch(url, {
-      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.7.2 (Stremio catalog addon)' },
+      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.8.0 (Stremio catalog addon)' },
     });
     if (!r.ok) throw new Error(`Wikidata ${r.status}`);
     return parseWikidata(await r.json());
@@ -624,10 +717,18 @@ async function load() {
     items.forEach((x) => { x.upcoming = !!x.startTime && x.startTime > now; });
     const released = items.filter((x) => !x.upcoming);
     // Trang phim Netflix: loại chính xác, mã gốc, tên, đạo diễn, diễn viên, mô tả
+    // Mỗi lần 5 trang song song (mỗi trang khoảng 2 MB), để bớt dồn yêu cầu tới Netflix
     const [pages, topPages] = await Promise.all([
-      mapInBatches(items, (x) => fetchNetflixTitle(x.netflixId)),
-      mapInBatches(top10.rows, (r) => fetchNetflixTitle(r.showId)),
+      mapInBatches(items, (x) => fetchNetflixTitle(x.netflixId), TITLE_BATCH),
+      mapInBatches(top10.rows, (r) => fetchNetflixTitle(r.showId), TITLE_BATCH),
     ]);
+    // Trang phim lỗi lần này: lý do, và có dùng tạm trang đọc được lần trước không
+    const pageErrors = [
+      ...items.map((x, i) => [x.netflixId, nfc(x.title), pages[i]]),
+      ...top10.rows.map((r, i) => [r.showId, topPages[i]?.title || r.enTitle, topPages[i]]),
+    ]
+      .filter(([id]) => titleErrors.has(String(id)))
+      .map(([id, title, page]) => ({ title, netflixId: id, error: titleErrors.get(String(id)), usedPrevious: !!page?.stale }));
     items.forEach((x, i) => {
       x.nf = pages[i];
       if (x.nf?.type) x.hint = x.nf.type; // Netflix ghi rõ loại → ưu tiên hơn mọi cách đoán
@@ -662,6 +763,7 @@ async function load() {
     const data = {
       fetchedAt: new Date().toISOString(), source, totalItems, read: items.length, released: released.length,
       netflixPages: pages.filter((p, i) => p && !items[i].upcoming).length, wikidata: wikidata.size, items: resolved,
+      pageErrors,
       top10: { lists: top10.lists, items: [...topResolved, ...topFailed] },
       upcoming: allResolved.filter((x) => x.upcoming),
     };
@@ -780,6 +882,7 @@ async function handler(req, res) {
         read: d.read,
         released: d.released,
         netflixPages: d.netflixPages,
+        pageErrors: d.pageErrors, // trang phim tải lỗi lần này (kể cả danh sách Top 10 và Sắp ra mắt)
         seasonIds: d.items.filter((x) => x.showId !== x.netflixId).length, // số tựa có mã trong danh sách khác mã gốc
         matched: d.items.filter((x) => x.meta).length,
         matchedViaWikidata: d.items.filter((x) => x.via === 'wikidata').length,
@@ -853,3 +956,5 @@ module.exports.decodeJsString = decodeJsString;
 module.exports.seasonNumber = seasonNumber;
 module.exports.parseNetflixShow = parseNetflixShow;
 module.exports.episodeEdges = episodeEdges;
+module.exports.parseEpisodeCards = parseEpisodeCards;
+module.exports.parseRuntime = parseRuntime;

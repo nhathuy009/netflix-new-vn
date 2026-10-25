@@ -19,7 +19,7 @@ Addon cung cấp danh sách và trang chi tiết tiếng Việt cho các phim tr
    - Netflix ghi rõ loại (`collection`: 2170013 = loạt phim, 2694103 = phim) → dùng luôn.
    - Phụ đề là "Mùa N", "Chương N", "Loạt phim…" → loạt phim.
    - Còn lại → để TMDB quyết định.
-4. Tải trang phim Netflix của từng tựa (`netflix.com/vn/title/<id>`) để lấy loại chính xác (phim/loạt phim), đạo diễn, diễn viên, thể loại, mô tả tiếng Việt và cờ Netflix Original.
+4. Tải trang phim Netflix của từng tựa (gửi header như trình duyệt, mỗi lần 5 trang song song; lỗi thì thử lại một lần, vẫn lỗi thì dùng trang đọc được lần trước của tựa đó) (`netflix.com/vn/title/<id>`) để lấy loại chính xác (phim/loạt phim), đạo diễn, diễn viên, thể loại, mô tả tiếng Việt và cờ Netflix Original.
 5. Tìm IMDb ID cho từng tựa:
    - **Wikidata trước:** tra thẳng theo mã Netflix (thuộc tính `P1874`), một request cho cả danh sách. Chính xác tuyệt đối, nhưng phim mới thường chưa được nhập.
    - **Không có trên Wikidata:** tìm TMDB bằng tên tiếng Việt và tiếng Anh (với Netflix Original chiếu lần đầu, tìm thêm một lượt lọc theo năm lên Netflix), xét toàn bộ 20 kết quả mỗi lượt, chấm điểm ứng viên theo loại, tên và ngày ra mắt so với ngày lên Netflix. Với Netflix Original chiếu lần đầu, ứng viên ra trước ngày lên Netflix hơn 1 năm bị loại. Với 3 ứng viên tốt nhất, đối chiếu đạo diễn và diễn viên với trang Netflix (+6 nếu trùng đạo diễn, +6 nếu trùng từ 2 diễn viên, −4 nếu không trùng ai), rồi lấy ứng viên tổng điểm cao nhất có IMDb ID.
@@ -29,7 +29,7 @@ Addon cung cấp danh sách và trang chi tiết tiếng Việt cho các phim tr
 ### Trang chi tiết tiếng Việt
 
 1. Với các phim trong 6 dòng, addon trả trang chi tiết lấy từ trang phim Netflix: mô tả tiếng Việt, thể loại, đạo diễn, diễn viên.
-2. Loạt phim có thêm danh sách tập (tên tập, tóm tắt tiếng Việt, ảnh) đọc từ khối Show trong `models.graphqlClcs` của trang phim. Trang còn có khối Show của phim khác (mục "Tác phẩm khác"), nên addon chọn khối có mã trùng mã phim và có danh sách tập. Trường danh sách tập có thể tên `episodes` hoặc kèm tham số phân trang (`episodes({"first":20})`) tuỳ phiên bản trang. Mã mỗi tập dạng `tt…:mùa:tập`, để các addon stream tìm được nguồn phát. Số mùa lấy từ nhãn "Mùa N"; loạt phim ngắn không có số thì theo thứ tự.
+2. Loạt phim có thêm danh sách tập (tên tập, tóm tắt tiếng Việt, ảnh) đọc từ khối Show trong `models.graphqlClcs` của trang phim. Trang còn có khối Show của phim khác (mục "Tác phẩm khác"), nên addon chọn khối có mã trùng mã phim và có danh sách tập. Trường danh sách tập có thể tên `episodes` hoặc kèm tham số phân trang (`episodes({"first":20})`) tuỳ phiên bản trang. Khi khối Show không có mùa nào (một số phiên bản trang Netflix trả cho máy chủ), addon đọc dự phòng từ thẻ HTML danh sách tập (`<li data-uia="episode-card">`); thẻ không ghi số mùa nên chỉ dùng cho loạt phim một mùa (nhãn "loạt phim truyền hình ngắn" hoặc "1 mùa"). Mã mỗi tập dạng `tt…:mùa:tập`, để các addon stream tìm được nguồn phát. Số mùa lấy từ nhãn "Mùa N"; loạt phim ngắn không có số thì theo thứ tự.
 3. Phim không nằm trong 6 dòng, hoặc loạt phim không đọc được danh sách tập: trả 404 để Stremio dùng addon dữ liệu phim kế tiếp (TMDB, Cinemeta).
 4. Stremio hỏi trang chi tiết của mọi phim. Khi dữ liệu chưa tải xong (lần đầu mất 20–40 giây), addon trả 404 ngay để không làm chậm phim khác.
 5. Stremio lấy trang chi tiết từ addon đầu tiên trong danh sách có dữ liệu, nên cần kéo addon này lên **trên** các addon dữ liệu phim khác (TMDB, Cinemeta) trong mục Addons.
@@ -62,12 +62,13 @@ TMDB_API_KEY=khoa_cua_ban npm start   # http://127.0.0.1:7000/manifest.json
 Mở `http://127.0.0.1:7000/debug.json` để kiểm tra:
 - `source`: `api` là lấy đủ các trang; `html (...)` là API lỗi, chỉ có trang 1.
 - `totalItems` / `read`: Netflix có bao nhiêu tựa, addon đọc được bao nhiêu.
+- `pageErrors`: trang phim tải lỗi lần này, lý do (mã HTTP, quá thời gian…), và có dùng tạm trang đọc được lần trước không (`usedPrevious`).
 - `netflixPages`: số trang phim Netflix đọc được. Bằng 0 nghĩa là Netflix chặn request từ máy chủ; addon vẫn chạy nhưng không có đối chiếu người và metadata bổ sung.
 - `matchedViaWikidata`: số tựa khớp chính xác qua Wikidata.
 - `matchedItems`: mỗi tựa khớp với mã TMDB/IMDb nào, qua nguồn nào (`wikidata` hoặc `search`), và với `search` thì các ứng viên đã thử kèm điểm (`điểm 4+12` = điểm theo tên/ngày + điểm đối chiếu người).
 - `needsReview`: các tựa khớp theo tên mà không trùng đạo diễn hay diễn viên nào, kèm link TMDB và Netflix để kiểm tra tay.
 - `unmatched`: các tựa không khớp, kèm các ứng viên đã thử.
-- `detail`: số phim lẻ và loạt phim có trang chi tiết (không đếm trùng); loạt phim không có danh sách tập (các phim này dùng trang chi tiết của addon khác), kèm chẩn đoán trang phim: kích thước trang (`pageBytes`), có khối `graphqlClcs` không, các khối Show có `seasons` (mã phim, có danh sách tập không, số mùa, tên các trường của mùa đầu tiên), và có khối nào trùng mã phim không (`matched`).
+- `detail`: số phim lẻ và loạt phim có trang chi tiết (không đếm trùng); loạt phim không có danh sách tập (các phim này dùng trang chi tiết của addon khác), kèm chẩn đoán trang phim: kích thước trang (`pageBytes`), có khối `graphqlClcs` không, các khối Show có `seasons` (mã phim, có danh sách tập không, số mùa, tên các trường của mùa đầu tiên), và có khối nào trùng mã phim không (`matched`), số thẻ HTML danh sách tập (`episodeCards`), nhãn số mùa (`numSeasonsLabel`), và nguồn danh sách tập (`source`: `json` hoặc `html`).
 - `upcoming`: các tựa sắp ra mắt, ngày ra mắt, và kết quả khớp của từng tựa.
 - `top10`: địa chỉ và lỗi (nếu có) của từng bảng (`lists`), tuần xếp hạng (`weekEnd`), số tựa khớp, và từng tựa theo thứ hạng kèm số tuần trong Top 10.
 

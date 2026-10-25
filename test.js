@@ -1,5 +1,6 @@
 // Test không cần mạng: dùng HTML thật của trang Netflix (fixtures/) và giả lập API Netflix, Wikidata, TMDB.
 const assert = require('assert');
+process.env.NETFLIX_RETRY_MS = '0'; // không chờ giữa hai lần tải trang phim trong test
 const fs = require('fs');
 
 const html = fs.readFileSync(__dirname + '/fixtures/new-to-watch-vi.html', 'utf8');
@@ -49,6 +50,8 @@ const { parseTudumTop10 } = require('./api/index');
 const TOP10 = [...parseTudumTop10(tudumMovies, 'movie'), ...parseTudumTop10(tudumTv, 'tv')];
 const top10Type = new Map(TOP10.map((r) => [String(r.showId), r.type]));
 
+let titleHeaders = null;
+const flaky = { n: 0, down: false };
 let apiUp = true;
 let wdUp = true;
 let top10Up = true;
@@ -64,6 +67,11 @@ global.fetch = async (url, opts = {}) => {
     return json({ results: { bindings: wdBindings(ids) } });
   }
   if (u.hostname === 'www.netflix.com') {
+    if (u.pathname.startsWith('/vn/title/')) titleHeaders = opts.headers;
+    // Lỗi lần đầu, lần thử lại thì được
+    if (u.pathname === '/vn/title/777') return (flaky.n++ === 0) ? { ok: false, status: 503 } : { ok: true, text: async () => titlePage };
+    // Được lần đầu; sau đó lỗi cả hai lần
+    if (u.pathname === '/vn/title/778') return flaky.down ? { ok: false, status: 429 } : { ok: true, text: async () => titlePage };
     if (u.pathname === '/vn/title/82023496') return { ok: true, text: async () => titlePage };
     // Mã mùa 81720672: trang phim ghi mã gốc 81720671 (Netflix chuyển hướng sang /title/81720671)
     if (u.pathname === '/vn/title/81720672') return { ok: true, url: 'https://www.netflix.com/vn/title/81720671', text: async () => fakeTitle({ type: 'Show', videoId: 81720671, topLevelVideoId: 81720671 }) };
@@ -262,6 +270,39 @@ function call(handler, path) {
   const wrong = h.parseNetflixShow(withDecoy, 99999999);
   assert.deepStrictEqual([wrong.seasons, wrong.showDiag.matched], [undefined, false]);
   assert.ok(wrong.showDiag.pageBytes > 0 && wrong.showDiag.hasGraphqlClcs);
+  // Dự phòng: thẻ HTML danh sách tập (khối HTML thật người dùng gửi), dùng khi khối Show không có mùa nào
+  const cardsHtml = fs.readFileSync(__dirname + '/fixtures/netflix-episodes-82682379.html', 'utf8');
+  const cards = h.parseEpisodeCards(cardsHtml);
+  assert.deepStrictEqual(cards.map((e) => [e.number, e.title, e.runtime]), [
+    [1, 'Tập 1', 3960], [2, 'Tập 2', 3840], [3, 'Tập 3', 3840], [4, 'Tập 4', 3660], [5, 'Tập 5', 3840], [6, 'Tập 6', 3660],
+  ]);
+  assert.ok(cards[0].synopsis.startsWith('Ngay ngày đầu tiên làm việc ở bệnh viện'));
+  assert.ok(cards.every((e) => e.still.startsWith('https://occ-0-58-325.1.nflxso.net/')));
+  assert.deepStrictEqual([h.parseRuntime('45ph'), h.parseRuntime('1h'), h.parseRuntime('1h 6ph'), h.parseRuntime('abc')], [2700, 3600, 3960, undefined]);
+  // Mô phỏng trang Vercel nhận: khối Show đúng mã nhưng không có mùa nào, trang có thẻ HTML danh sách tập
+  const noSeasons = showPage.replace('"seasons":{"__typename":"SeasonsConnection","edges":[', '"seasons":{"__typename":"SeasonsConnection","edges":[],"old":[');
+  assert.notStrictEqual(noSeasons, showPage);
+  assert.strictEqual(h.parseNetflixShow(noSeasons, 82682379).seasons, undefined); // không có thẻ HTML: không có tập
+  const fromCards = h.parseNetflixShow(noSeasons.replace('</body>', cardsHtml + '</body>'), 82682379);
+  assert.strictEqual(fromCards.showDiag.source, 'html');
+  assert.strictEqual(fromCards.showDiag.numSeasonsLabel, 'loạt phim truyền hình ngắn');
+  assert.deepStrictEqual([fromCards.seasons.length, fromCards.seasons[0].number, fromCards.seasons[0].episodes.length], [1, 1, 6]);
+  assert.strictEqual(fromCards.availableFrom, '2026-10-09T14:30:00.000Z');
+  // Loạt phim nhiều mùa: thẻ HTML không ghi số mùa, không dùng để tránh gán nhầm mùa
+  const multi = noSeasons.replace('"numSeasonsLabel":"lo\\u1EA1t\\x20phim\\x20truy\\u1EC1n\\x20h\\u00ECnh\\x20ng\\u1EAFn"', '"numSeasonsLabel":"2\\x20m\\u00F9a"');
+  assert.notStrictEqual(multi, noSeasons);
+  const fromMulti = h.parseNetflixShow(multi.replace('</body>', cardsHtml + '</body>'), 82682379);
+  assert.deepStrictEqual([fromMulti.seasons, fromMulti.showDiag.numSeasonsLabel, fromMulti.showDiag.episodeCards], [undefined, '2 mùa', 6]);
+
+  // Tải trang phim: header như trình duyệt, thử lại một lần khi lỗi, dùng trang lần trước khi vẫn lỗi
+  assert.strictEqual((await h.fetchNetflixTitle(777)).title, 'Sống đời'); // lỗi 503 lần đầu, lần thử lại được
+  assert.strictEqual(flaky.n, 2);
+  assert.ok(titleHeaders['User-Agent'].includes('Chrome/') && titleHeaders['Accept-Language'].startsWith('vi-VN'));
+  assert.strictEqual((await h.fetchNetflixTitle(778)).stale, undefined);
+  flaky.down = true;
+  const stale = await h.fetchNetflixTitle(778);
+  assert.deepStrictEqual([stale.title, stale.stale], ['Sống đời', true]);
+
   assert.strictEqual(h.seasonNumber({ numberLabelV2: 'Mùa 3' }, 0), 3);
   assert.strictEqual(h.seasonNumber({ shortTitle: 'Phần 4' }, 0), 4);
   assert.strictEqual(h.seasonNumber({ numberLabelV2: 'Loạt phim truyền hình ngắn' }, 1), 2);
@@ -352,6 +393,9 @@ function call(handler, path) {
 
   // Metadata từ trang phim Netflix
   assert.strictEqual(dbg.netflixPages, 5); // Sống đời, Cái bẫy, #Yêu, Cơn bão + Bản năng thú (cũng là phim lẻ hạng 1 Top 10 tuần)
+  // Trang phim lỗi được ghi lại kèm lý do (trang giả lập không có thì trả 404)
+  assert.deepStrictEqual(dbg.pageErrors.find((x) => x.netflixId === 900001), { title: 'Phim lẻ A', netflixId: 900001, error: 'HTTP 404', usedPrevious: false });
+  assert.ok(!dbg.pageErrors.some((x) => x.netflixId === 82023496)); // Sống đời đọc được
   assert.ok(song.description.startsWith('Người mẹ đơn thân'));   // mô tả tiếng Việt của Netflix
   assert.ok(song.releaseInfo.endsWith('· Netflix Original'));
   assert.deepStrictEqual(song.links.filter((l) => l.category === 'Directors').map((l) => l.name), ['Tyler Perry']);
