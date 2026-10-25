@@ -1,0 +1,12 @@
+{
+  "name": "netflix-new-stremio",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Stremio catalog addon: Mới trên Netflix (VN)",
+  "main": "api/index.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "engines": { "node": ">=18" }
+}
