@@ -241,6 +241,19 @@ function call(handler, path) {
   assert.strictEqual(ep3.runtime, 3851);
   assert.ok(ep3.synopsis.startsWith('Nhân viên bệnh viện bắt đầu nghi ngờ về quá khứ của Su Jeong'));
   assert.ok(ep3.still.startsWith('https://'));
+  // Trang có khối Show của phim khác ("Tác phẩm khác") đứng trước, có seasons nhưng không có danh sách tập:
+  // phải chọn đúng khối của phim đang xem theo mã, không lấy khối đầu tiên
+  const decoy = '{"__typename":"Show","title":"Phim kh\\u00E1c","videoId":81111111,"seasons":{"__typename":"SeasonsConnection","totalCount":2}}';
+  const withDecoy = showPage.replace('"graphqlClcs":{', `"similar":${decoy},"graphqlClcs":{`);
+  assert.ok(withDecoy.indexOf('81111111') < withDecoy.indexOf('"videoId":82682379,"seasons"'));
+  const pick = h.parseNetflixShow(withDecoy, 82682379);
+  assert.strictEqual(pick.seasons[0].episodes.length, 6);
+  assert.deepStrictEqual(pick.showDiag.showsWithSeasons, [{ videoId: 81111111, episodes: false }, { videoId: 82682379, episodes: true }]);
+  assert.strictEqual(pick.showDiag.matched, true);
+  // Mã phim không khớp khối nào có danh sách tập: không lấy nhầm tập của phim khác
+  const wrong = h.parseNetflixShow(withDecoy, 99999999);
+  assert.deepStrictEqual([wrong.seasons, wrong.showDiag.matched], [undefined, false]);
+  assert.ok(wrong.showDiag.pageBytes > 0 && wrong.showDiag.hasGraphqlClcs);
   assert.strictEqual(h.seasonNumber({ numberLabelV2: 'Mùa 3' }, 0), 3);
   assert.strictEqual(h.seasonNumber({ shortTitle: 'Phần 4' }, 0), 4);
   assert.strictEqual(h.seasonNumber({ numberLabelV2: 'Loạt phim truyền hình ngắn' }, 1), 2);
@@ -438,7 +451,11 @@ function call(handler, path) {
   assert.strictEqual((await call(h, '/meta/movie/tt0000001.json')).status, 404);
   assert.strictEqual((await call(h, '/meta/series/tt36429458.json')).status, 404);
   const detailDbg = (await call(h, '/debug.json')).body.detail;
-  assert.ok(detailDbg.seriesWithEpisodes >= 1 && detailDbg.seriesWithoutEpisodes.includes('Cái bẫy'));
+  assert.ok(detailDbg.seriesWithEpisodes >= 1);
+  const trapDiag = detailDbg.seriesWithoutEpisodes.find((x) => x.title === 'Cái bẫy');
+  assert.deepStrictEqual([trapDiag.netflixId, trapDiag.page.matched, trapDiag.page.showsWithSeasons], [81720671, false, []]);
+  const titles = detailDbg.seriesWithoutEpisodes.map((x) => x.title);
+  assert.deepStrictEqual(titles, [...new Set(titles)]); // không lặp tên
   assert.ok((await call(h, '/manifest.json')).body.resources.includes('meta'));
 
   // Dạng request trên Vercel sau rewrite: /api/index?__path=<đường dẫn gốc>

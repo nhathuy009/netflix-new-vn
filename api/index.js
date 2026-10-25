@@ -15,7 +15,7 @@ const COLLECTION = { SERIES: 2170013, FILM: 2694103, SPECIALS: 2173907, GAMES: 8
 
 const manifest = {
   id: 'community.netflix.newtowatch.vi',
-  version: '1.7.0',
+  version: '1.7.1',
   name: 'Mới trên Netflix (VN)',
   description: 'Phim và loạt phim mới và sắp ra mắt trên Netflix Việt Nam (about.netflix.com/vi/new-to-watch), Top 10 tuần tại Việt Nam (netflix.com/tudum/top10/vietnam)',
   // meta: trang chi tiết tiếng Việt (mô tả, danh sách tập) cho các phim trong danh sách của addon.
@@ -136,14 +136,16 @@ function balancedAt(text, start) {
 // Dữ liệu trong netflix.reactContext viết bằng JS nên có \xNN, cần đổi sang \u00NN trước khi đọc như JSON
 const decodeJs = (raw) => raw.replace(/(?<!\\)((?:\\\\)*)\\x([0-9a-fA-F]{2})/g, '$1\\u00$2');
 
-// Dữ liệu phim nằm trong netflix.reactContext.models.nmTitleGQL
-function parseNetflixTitle(html) {
+// Dữ liệu phim nằm trong netflix.reactContext.models.nmTitleGQL.
+// fallbackId: mã gốc lấy từ địa chỉ sau chuyển hướng, dùng khi trang không ghi topLevelVideoId.
+function parseNetflixTitle(html, fallbackId = null) {
   const raw = extractObject(html, '"nmTitleGQL":');
   if (!raw) return null;
   const d = JSON.parse(decodeJs(raw))?.data;
   if (!d?.metaData) return null;
   const names = (list) => (list || []).map((p) => nfc(p.name)).filter(Boolean);
   const t = d.metaData.type || '';
+  const topId = Number(d.metaData.topLevelVideoId || d.metaData.videoId) || fallbackId || null;
   return {
     title: nfc(d.copy?.title) || undefined,
     type: /movie/i.test(t) ? 'movie' : /show|series/i.test(t) || d.metaData.seasonCount ? 'tv' : null,
@@ -155,8 +157,8 @@ function parseNetflixTitle(html) {
     isOriginal: !!d.metaData.isOriginal,
     background: d.artwork?.heroImage?.url,
     // Mã gốc của tựa. Với loạt phim, danh sách "Mới trên Netflix" cho mã của mùa, trang phim cho mã của cả loạt phim.
-    topId: Number(d.metaData.topLevelVideoId || d.metaData.videoId) || null,
-    ...parseNetflixShow(html),
+    topId,
+    ...parseNetflixShow(html, topId),
   };
 }
 
@@ -168,14 +170,32 @@ function seasonNumber(node, index) {
 
 // Danh sách mùa và tập (tiếng Việt) nằm trong khối Show của models.graphqlClcs:
 // {"__typename":"Show",...,"seasons":{"__typename":"SeasonsConnection","edges":[{node: Season{episodes:{edges:[{node: Episode}]}}}]}}
-function parseNetflixShow(html) {
-  const marker = html.indexOf('"seasons":{"__typename":"SeasonsConnection"');
-  if (marker < 0) return {};
-  const start = html.lastIndexOf('{"__typename":"Show"', marker);
-  const raw = start < 0 ? null : balancedAt(html, start);
-  if (!raw) return {};
-  let show;
-  try { show = JSON.parse(decodeJs(raw)); } catch { return {}; }
+// Trang còn có khối Show của phim khác (mục "Tác phẩm khác"), có trường seasons nhưng không có danh sách tập.
+// Vì vậy duyệt mọi khối Show có seasons và chọn khối có videoId trùng mã phim (wantId). Không biết mã phim thì
+// lấy khối đầu tiên có danh sách tập. Kèm thông tin chẩn đoán (showDiag) để biết vì sao không có danh sách tập.
+function parseNetflixShow(html, wantId) {
+  const marker = '"seasons":{"__typename":"SeasonsConnection"';
+  const candidates = [];
+  for (let k = html.indexOf(marker); k >= 0; k = html.indexOf(marker, k + marker.length)) {
+    const start = html.lastIndexOf('{"__typename":"Show"', k);
+    const raw = start < 0 ? null : balancedAt(html, start);
+    if (!raw) continue;
+    try {
+      const show = JSON.parse(decodeJs(raw));
+      if (!candidates.some((c) => c.videoId === show.videoId)) candidates.push(show);
+    } catch { /* khối hỏng: bỏ qua */ }
+  }
+  const hasEpisodes = (sh) => (sh.seasons?.edges || []).some((se) => se?.node?.episodes?.edges?.length);
+  const show = wantId
+    ? candidates.find((sh) => Number(sh.videoId) === Number(wantId) && hasEpisodes(sh))
+    : candidates.find(hasEpisodes);
+  const showDiag = {
+    pageBytes: html.length,
+    hasGraphqlClcs: html.includes('"graphqlClcs"'),
+    showsWithSeasons: candidates.map((sh) => ({ videoId: sh.videoId, episodes: hasEpisodes(sh) })),
+    matched: !!show,
+  };
+  if (!show) return { showDiag };
   const seasons = (show.seasons?.edges || []).map((se, i) => {
     const node = se?.node || {};
     return {
@@ -196,6 +216,7 @@ function parseNetflixShow(html) {
     seasons: seasons.length ? seasons : undefined,
     availableFrom: show.availabilityStartTime || undefined,
     year: Number(show.latestYear) || undefined,
+    showDiag,
   };
 }
 
@@ -204,11 +225,9 @@ async function fetchNetflixTitle(id) {
   try {
     const r = await fetch(titleUrl(id), { headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'text/html', 'Accept-Language': LANG } });
     if (!r.ok) return null;
-    const nf = parseNetflixTitle(await r.text());
     // Trang không ghi topLevelVideoId thì lấy mã trong địa chỉ sau khi Netflix chuyển hướng (…/title/<mã gốc>)
     const redirected = Number((r.url || '').match(/\/title\/(\d+)/)?.[1]) || null;
-    if (nf && !nf.topId) nf.topId = redirected;
-    return nf;
+    return parseNetflixTitle(await r.text(), redirected);
   } catch {
     return null;
   }
@@ -561,7 +580,7 @@ async function fetchWikidata(netflixIds) {
   try {
     const url = `${WIKIDATA}?format=json&query=${encodeURIComponent(wikidataQuery(netflixIds))}`;
     const r = await fetch(url, {
-      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.7.0 (Stremio catalog addon)' },
+      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.7.1 (Stremio catalog addon)' },
     });
     if (!r.ok) throw new Error(`Wikidata ${r.status}`);
     return parseWikidata(await r.json());
@@ -765,10 +784,16 @@ async function handler(req, res) {
         detail: (() => {
           const all = [...d.items, ...d.top10.items, ...d.upcoming].filter((x) => x.meta);
           const series = all.filter((x) => x.meta.type === 'series');
+          const unique = (list) => new Set(list.map((x) => x.meta.id)).size; // một phim có thể nằm ở nhiều dòng
           return {
-            movies: all.length - series.length,
-            seriesWithEpisodes: series.filter((x) => x.nf?.seasons?.length).length,
-            seriesWithoutEpisodes: series.filter((x) => !x.nf?.seasons?.length).map((x) => x.title),
+            movies: unique(all.filter((x) => x.meta.type === 'movie')),
+            seriesWithEpisodes: unique(series.filter((x) => x.nf?.seasons?.length)),
+            // Bỏ trùng (một phim có thể nằm ở nhiều dòng); kèm chẩn đoán trang phim
+            seriesWithoutEpisodes: [...new Map(series.filter((x) => !x.nf?.seasons?.length).map((x) => [x.meta.id, {
+              title: x.title,
+              netflixId: x.showId,
+              page: x.nf ? x.nf.showDiag || null : 'không đọc được trang phim',
+            }])).values()],
           };
         })(),
         upcoming: {
@@ -810,3 +835,4 @@ module.exports.parseTudumTop10 = parseTudumTop10;
 module.exports.cleanSeasonTitle = cleanSeasonTitle;
 module.exports.decodeJsString = decodeJsString;
 module.exports.seasonNumber = seasonNumber;
+module.exports.parseNetflixShow = parseNetflixShow;
