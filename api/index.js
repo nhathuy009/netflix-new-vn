@@ -194,9 +194,9 @@ async function searchTmdb(title, hint) {
 
 const norm = (s) => nfc(s).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
-// "Mùa 2", "Phần 4", "Chương 2"...: loạt phim đã ra từ trước, ngày TMDB là ngày của mùa đầu
+// "Mùa 2", "Phần 4", "Chương 2", "Cyberpunk: Edgerunners 2"...: loạt phim đã ra từ trước, ngày TMDB là ngày của mùa đầu
 function isLaterSeason(item) {
-  const m = (item.subtitle || '').match(/(?:Mùa|Phần|Chương|Season)\s*(\d+)/i);
+  const m = (item.subtitle || '').match(/(?:Mùa|Phần|Chương|Season)\s*(\d+)/i) || (item.subtitle || '').match(/\s(\d+)\s*$/);
   return !!m && Number(m[1]) >= 2;
 }
 
@@ -209,6 +209,8 @@ function scoreCandidate(c, item) {
   const d = Date.parse(c.release_date || c.first_air_date || '');
   if (!Number.isNaN(d) && item.startTime) {
     if (d > item.startTime + 60 * DAY) return -Infinity; // ra mắt sau ngày lên Netflix: không thể là phim này
+    // Netflix Original chiếu lần đầu (không phải mùa sau) mà ứng viên ra trước đó hơn 1 năm: không thể là phim này
+    if (item.nf?.isOriginal && !isLaterSeason(item) && d < item.startTime - 365 * DAY) return -Infinity;
     else if (!isLaterSeason(item) && Math.abs(d - item.startTime) <= 45 * DAY) s += 4; // ra mắt cùng đợt với Netflix
   }
   return s;
@@ -315,7 +317,9 @@ async function resolveBySearch(item) {
   // Điểm cao nhất trong số ứng viên có IMDb ID; bằng điểm thì giữ thứ tự cũ
   const best = checked.filter((x) => x.imdb).sort((a, b) => b.total - a.total)[0];
   if (!best) return { ...item, error: `không ứng viên nào có IMDb ID: ${tried.join('; ')}` };
-  return { ...withMeta(item, { imdb: best.imdb, mediaType: best.c.media_type, details: best.details, via: 'search' }), tried };
+  // Không trùng đạo diễn hay diễn viên nào: khớp chỉ dựa vào tên và ngày, nên kiểm tra tay
+  const needsReview = !!item.nf && best.people <= 0;
+  return { ...withMeta(item, { imdb: best.imdb, mediaType: best.c.media_type, details: best.details, via: 'search' }), tried, needsReview };
 }
 
 function resolve(item, wikidata) {
@@ -464,6 +468,10 @@ async function handler(req, res) {
         matched: d.items.filter((x) => x.meta).length,
         matchedViaWikidata: d.items.filter((x) => x.via === 'wikidata').length,
         matchedItems: d.items.filter((x) => x.meta).map((x) => ({ title: x.title, via: x.via, tmdb: x.tmdb, imdb: x.meta.id, tried: x.tried })),
+        needsReview: d.items.filter((x) => x.needsReview).map((x) => ({
+          title: x.title, enTitle: x.enTitle, imdb: x.meta.id,
+          tmdb: `https://www.themoviedb.org/${x.tmdb}`, netflix: titleUrl(x.netflixId),
+        })),
         unmatched: d.items.filter((x) => !x.meta).map((x) => ({ title: x.title, enTitle: x.enTitle, netflixId: x.netflixId, reason: x.error })),
       });
     }
@@ -481,3 +489,4 @@ module.exports.scoreCandidate = scoreCandidate;
 module.exports.parseWikidata = parseWikidata;
 module.exports.parseNetflixTitle = parseNetflixTitle;
 module.exports.peopleScore = peopleScore;
+module.exports.isLaterSeason = isLaterSeason;
