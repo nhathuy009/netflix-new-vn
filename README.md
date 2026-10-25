@@ -28,9 +28,12 @@ Addon chỉ cung cấp danh sách. Bấm vào phim, Stremio dùng các addon str
 ### Top 10 Việt Nam theo tuần
 
 1. Đọc hai trang Netflix Tudum (phim lẻ và loạt phim). Bảng xếp hạng tính theo tuần thứ Hai đến Chủ nhật, cập nhật mỗi thứ Ba.
-2. Mỗi tựa có một khối `Top10Data`: thứ hạng tuần (`weeklyRank`), số tuần trong Top 10 (`cumulativeWeeksInTop10`), ngày cuối tuần (`weekEndDate`) và `videoId`. Trang lưu mỗi khối hai lần, addon bỏ bản trùng.
-3. Với loạt phim, `videoId` là mã của **mùa**. Mã của cả loạt phim lấy từ nút Watch trong thẻ phim (`<li data-entity-id="top10-…-<videoId>">`), không dựa vào việc Netflix chuyển trang mùa sang trang loạt phim (có mùa không chuyển được). Thẻ phim cũng có tên tiếng Anh, dùng khi tìm TMDB.
-4. Đọc trang phim theo mã loạt phim để lấy tên tiếng Việt, loại, đạo diễn, diễn viên, mô tả; rồi tìm IMDb ID như danh sách phim mới (Wikidata trước, sau đó tìm TMDB). Không đọc được trang phim thì dùng tên tiếng Anh trong thẻ để hiển thị và tìm, và đưa tựa đó vào `needsReview`.
+2. Dữ liệu lấy từ khối JSON máy chủ nhúng sẵn trong trang (`netflix.reactContext.models.graphql = JSON.parse('...')`), không lấy từ thẻ phim `<li>` vì HTML máy chủ trả về có thể thiếu thẻ. Mỗi tựa là một mục `PulseTop10ItemEntity` gồm:
+   - `top10`: thứ hạng tuần (`weeklyRank`), số tuần trong Top 10 (`cumulativeWeeksInTop10`), ngày cuối tuần (`weekEndDate`), loại (`MOVIES`/`SERIES`) và `videoId`. Với loạt phim, `videoId` là mã của **mùa**.
+   - `displayVideo.video.parentShow.videoId`: mã của cả loạt phim (phim lẻ không có `parentShow`, dùng `video.videoId`).
+   - `top10Video.parentShow.title`: tên tiếng Anh của loạt phim, dùng khi tìm TMDB.
+3. Trang lưu mỗi tựa hai lần, addon bỏ bản trùng.
+4. Đọc trang phim theo mã loạt phim để lấy tên tiếng Việt, loại, đạo diễn, diễn viên, mô tả; rồi tìm IMDb ID như danh sách phim mới (Wikidata trước, sau đó tìm TMDB). Không đọc được trang phim thì dùng tên tiếng Anh trên trang Tudum để hiển thị và tìm, và đưa tựa đó vào `needsReview`.
 5. Xếp theo thứ hạng Netflix, hiển thị dạng "#4 tại Việt Nam · 20 tuần trong Top 10". Một loạt phim có nhiều mùa cùng lọt Top 10 chỉ hiện một lần, ở hạng cao nhất.
 6. Trang Top 10 lỗi, hoặc Netflix chuyển sang trang nước khác: dòng tương ứng trống và `/debug.json` ghi lý do; các dòng khác vẫn chạy.
 

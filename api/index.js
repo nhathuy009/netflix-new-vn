@@ -15,7 +15,7 @@ const COLLECTION = { SERIES: 2170013, FILM: 2694103, SPECIALS: 2173907, GAMES: 8
 
 const manifest = {
   id: 'community.netflix.newtowatch.vi',
-  version: '1.5.1',
+  version: '1.5.2',
   name: 'Mới trên Netflix (VN)',
   description: 'Phim và loạt phim mới lên Netflix Việt Nam (about.netflix.com/vi/new-to-watch) và Top 10 tuần tại Việt Nam (netflix.com/tudum/top10/vietnam)',
   resources: ['catalog'],
@@ -175,42 +175,50 @@ const TOP10_URLS = {
 };
 const TOP10_CATEGORY = { movie: 'MOVIES', tv: 'SERIES' };
 
-// Tên trong thẻ Tudum có phần mùa ở cuối ("Firefly Wedding: Season 1", "Below: Limited Series"): bỏ đi để tìm
-const cleanCardTitle = (s) => nfc(s).replace(/:\s*(Season|Part|Volume|Chapter)\s+\d+\s*$|:\s*Limited Series\s*$/i, '').trim();
+// Tên mùa có phần mùa ở cuối ("Firefly Wedding: Season 1", "Below: Limited Series"): bỏ đi để tìm
+const cleanSeasonTitle = (s) => nfc(s).replace(/:\s*(Season|Part|Volume|Chapter)\s+\d+\s*$|:\s*Limited Series\s*$/i, '').trim();
 
-// Thẻ phim <li data-entity-id="top10-…-<videoId>">: nút Watch trỏ tới mã của cả loạt phim (với phim lẻ trùng videoId),
-// ảnh logo có tên tiếng Anh. Trả về Map videoId → { watchId, cardTitle }.
-function parseTudumCards(html) {
-  const cards = new Map();
-  const re = /<li data-entity-id="top10-[A-Za-z0-9]+-(\d+)"/g;
-  let m;
-  while ((m = re.exec(html))) {
-    const end = html.indexOf('</li>', m.index);
-    const li = html.slice(m.index, end < 0 ? undefined : end);
-    const watchId = Number(li.match(/netflix\.com\/watch\/(\d+)/)?.[1]) || null;
-    const alt = li.match(/alt="([^"]+)"/)?.[1];
-    const cardTitle = alt ? cleanCardTitle(alt.replace(/&amp;/g, '&').replace(/&#x27;|&#39;/g, "'").replace(/&quot;/g, '"')) : null;
-    if (!cards.has(m[1])) cards.set(m[1], { watchId, cardTitle });
-  }
-  return cards;
+// Giải mã nội dung chuỗi JavaScript '...' (\\ \' \" \n \t \xHH \uHHHH...). Không dùng eval với nội dung tải từ mạng.
+function decodeJsString(raw) {
+  const simple = { n: '\n', r: '\r', t: '\t', b: '\b', f: '\f', v: '\v', 0: '\0' };
+  return raw.replace(/\\(x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|[\s\S])/g, (_, e) =>
+    e.length > 1 ? String.fromCharCode(parseInt(e.slice(1), 16)) : simple[e] ?? e);
 }
 
-// Mỗi tựa có một khối "top10":{"__typename":"Top10Data",...} gồm thứ hạng tuần, số tuần trong Top 10,
-// ngày cuối tuần và videoId. Với loạt phim, videoId là mã của MÙA; mã của cả loạt phim lấy từ nút Watch
-// trong thẻ (không dựa vào việc Netflix chuyển trang mùa sang trang loạt phim, vì có mùa không chuyển được).
-// Trang lưu mỗi khối hai lần nên phải bỏ trùng.
+// Dữ liệu trang Tudum do máy chủ nhúng sẵn: netflix.reactContext.models.graphql = JSON.parse('...')
+function parseTudumGraphql(html) {
+  const key = "netflix.reactContext.models.graphql = JSON.parse('";
+  const k = html.indexOf(key);
+  if (k < 0) return null;
+  const start = k + key.length;
+  let end = -1;
+  for (let i = start; i < html.length; i++) {
+    if (html[i] === '\\') i++; // bỏ qua ký tự được mã hoá
+    else if (html[i] === "'") { end = i; break; }
+  }
+  if (end < 0) return null;
+  try {
+    return JSON.parse(decodeJsString(html.slice(start, end)))?.data || null;
+  } catch {
+    return null;
+  }
+}
+
+// Mỗi tựa là một mục "PulseTop10ItemEntity:…" gồm:
+//   top10: thứ hạng tuần, số tuần trong Top 10, ngày cuối tuần, loại, videoId (với loạt phim là mã của MÙA)
+//   displayVideo.video: mục phim; với loạt phim là Season, parentShow.videoId là mã của cả loạt phim
+//   top10Video: tên tiếng Anh, parentShow.title là tên loạt phim
 function parseTudumTop10(html, type) {
-  const key = '"top10":{"__typename":"Top10Data"';
-  const cards = parseTudumCards(html);
+  const data = parseTudumGraphql(html);
+  if (!data) return [];
   const rows = new Map();
-  for (let k = html.indexOf(key); k >= 0; k = html.indexOf(key, k + key.length)) {
-    const raw = extractObject(html.slice(k), '"top10":');
-    if (!raw) continue;
-    let d;
-    try { d = JSON.parse(decodeJs(raw)); } catch { continue; }
-    if (d.category !== TOP10_CATEGORY[type] || !d.videoId || !d.weeklyRank) continue;
-    const card = cards.get(String(d.videoId)) || {};
-    const showId = card.watchId || Number(d.videoId);
+  for (const [key, e] of Object.entries(data)) {
+    if (!key.startsWith('PulseTop10ItemEntity:')) continue;
+    const d = e?.top10;
+    if (!d || d.category !== TOP10_CATEGORY[type] || !d.videoId || !d.weeklyRank) continue;
+    const video = e.displayVideo?.video;
+    const showId = Number(video?.parentShow?.videoId || video?.videoId || d.videoId);
+    const tv = e.top10Video || {};
     rows.set(d.videoId, {
       type,
       rank: Number(d.weeklyRank),
@@ -218,7 +226,7 @@ function parseTudumTop10(html, type) {
       seasonId: showId !== Number(d.videoId) ? Number(d.videoId) : null,
       weeks: Number(d.cumulativeWeeksInTop10) || null,
       weekEnd: d.weekEndDate || null,
-      cardTitle: card.cardTitle || null,
+      enTitle: nfc(tv.parentShow?.title) || (tv.title ? cleanSeasonTitle(tv.title) : null) || null,
     });
   }
   return [...rows.values()].sort((a, b) => a.rank - b.rank).slice(0, 10);
@@ -449,7 +457,7 @@ async function resolveBySearch(item) {
   const best = checked.filter((x) => x.imdb).sort((a, b) => b.total - a.total)[0];
   if (!best) return { ...item, error: `không ứng viên nào có IMDb ID: ${tried.join('; ')}` };
   // Không trùng đạo diễn hay diễn viên nào: khớp chỉ dựa vào tên và ngày, nên kiểm tra tay
-  const needsReview = (!!item.nf || !!item.cardFallback) && best.people <= 0;
+  const needsReview = (!!item.nf || !!item.tudumFallback) && best.people <= 0;
   return { ...withMeta(item, { imdb: best.imdb, mediaType: best.c.media_type, details: best.details, via: 'search' }), tried, needsReview };
 }
 
@@ -503,7 +511,7 @@ async function fetchWikidata(netflixIds) {
   try {
     const url = `${WIKIDATA}?format=json&query=${encodeURIComponent(wikidataQuery(netflixIds))}`;
     const r = await fetch(url, {
-      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.5.1 (Stremio catalog addon)' },
+      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.5.2 (Stremio catalog addon)' },
     });
     if (!r.ok) throw new Error(`Wikidata ${r.status}`);
     return parseWikidata(await r.json());
@@ -538,7 +546,7 @@ async function load() {
       x.showId = x.nf?.topId || x.netflixId;
     });
     // Tên tiếng Việt và mọi thông tin khác lấy từ trang phim. Không đọc được trang phim thì dùng tên tiếng Anh
-    // trong thẻ Tudum để hiển thị và tìm (không đối chiếu được người, nên đưa vào needsReview).
+    // trên trang Tudum để hiển thị và tìm (không đối chiếu được người, nên đưa vào needsReview).
     const topItems = top10.rows.map((r, i) => ({
       list: r.type,
       rank: r.rank,
@@ -547,9 +555,9 @@ async function load() {
       netflixId: r.showId,
       seasonId: r.seasonId,
       showId: topPages[i]?.topId || r.showId,
-      title: topPages[i]?.title || r.cardTitle,
-      enTitle: r.cardTitle || undefined,
-      cardFallback: !topPages[i] && !!r.cardTitle,
+      title: topPages[i]?.title || r.enTitle,
+      enTitle: r.enTitle || undefined,
+      tudumFallback: !topPages[i] && !!r.enTitle,
       nf: topPages[i],
       hint: r.type, // loại theo bảng xếp hạng (phim / loạt phim)
       image: topPages[i]?.background,
@@ -561,7 +569,7 @@ async function load() {
     const resolved = await resolveAll(released, wikidata);
     // Không đọc được trang phim thì không có tên để hiển thị hay để tìm
     const topResolved = await resolveAll(topItems.filter((x) => x.title), wikidata);
-    const topFailed = topItems.filter((x) => !x.title).map((x) => ({ ...x, error: 'không đọc được trang phim Netflix, thẻ Tudum cũng không có tên' }));
+    const topFailed = topItems.filter((x) => !x.title).map((x) => ({ ...x, error: 'không đọc được trang phim Netflix, trang Tudum cũng không có tên' }));
     const data = {
       fetchedAt: new Date().toISOString(), source, totalItems, read: items.length, released: released.length,
       netflixPages: pages.filter(Boolean).length, wikidata: wikidata.size, items: resolved,
@@ -644,7 +652,7 @@ async function handler(req, res) {
             .sort((a, b) => a.list.localeCompare(b.list) || a.rank - b.rank)
             .map((x) => ({
               list: x.list, rank: x.rank, weeks: x.weeks, title: x.title, netflixId: x.showId, seasonId: x.seasonId || undefined,
-              fromCard: x.cardFallback || undefined, via: x.via,
+              fromTudum: x.tudumFallback || undefined, via: x.via,
               tmdb: x.tmdb, imdb: x.meta?.id, reason: x.error, tried: x.tried,
             })),
         },
@@ -676,4 +684,5 @@ module.exports.isLaterSeason = isLaterSeason;
 module.exports.fetchNetflixTitle = fetchNetflixTitle;
 module.exports.searchYears = searchYears;
 module.exports.parseTudumTop10 = parseTudumTop10;
-module.exports.cleanCardTitle = cleanCardTitle;
+module.exports.cleanSeasonTitle = cleanSeasonTitle;
+module.exports.decodeJsString = decodeJsString;

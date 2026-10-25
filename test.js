@@ -201,17 +201,24 @@ function call(handler, path) {
   // Đọc Top 10 từ trang chủ thật
   assert.strictEqual(TOP10.length, 20); // mỗi khối có hai bản trong trang: đã bỏ trùng
   assert.deepStrictEqual(TOP10.filter((r) => r.type === 'movie').map((r) => r.rank), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-  // Loạt phim: mã của cả loạt phim lấy từ nút Watch, mã trong Top10Data là mã của mùa
+  // Loạt phim: mã của cả loạt phim lấy từ displayVideo.video.parentShow trong khối JSON, mã trong Top10Data là mã của mùa.
+  // Dữ liệu test không có thẻ <li> nào (giống HTML máy chủ trả về có thể thiếu thẻ), nên chỉ đọc được từ khối JSON.
   assert.deepStrictEqual(TOP10.find((r) => r.type === 'tv'), {
-    type: 'tv', rank: 1, showId: 82682379, seasonId: 82682380, weeks: 2, weekEnd: '2026-10-18', cardTitle: 'Doctor X: Mafia in White',
+    type: 'tv', rank: 1, showId: 82682379, seasonId: 82682380, weeks: 2, weekEnd: '2026-10-18', enTitle: 'Doctor X: Mafia in White',
   });
   assert.deepStrictEqual(TOP10.filter((r) => r.type === 'tv' && r.rank === 8).map((r) => [r.showId, r.seasonId]), [[83136358, 83136391]]);
   assert.deepStrictEqual(TOP10.filter((r) => r.type === 'tv' && r.rank === 6).map((r) => [r.showId, r.seasonId]), [[81712068, 83050560]]);
-  // Phim lẻ: nút Watch trùng videoId, không có mã mùa
+  assert.strictEqual(TOP10.find((r) => r.type === 'tv' && r.rank === 10).enTitle, 'Doctor X Surgeon Michiko Daimon'); // tên loạt phim, không có số mùa
+  assert.ok(!/<li[\s>]/.test(tudumTv)); // không có thẻ <li> nào
+  // Phim lẻ: không có parentShow, mã trùng videoId, không có mã mùa
   assert.ok(TOP10.filter((r) => r.type === 'movie').every((r) => r.seasonId === null));
-  assert.strictEqual(h.cleanCardTitle('Firefly Wedding: Season 1'), 'Firefly Wedding');
-  assert.strictEqual(h.cleanCardTitle('Below: Limited Series'), 'Below');
-  assert.strictEqual(h.cleanCardTitle('Kong: Skull Island'), 'Kong: Skull Island');
+  assert.strictEqual(h.cleanSeasonTitle('Firefly Wedding: Season 1'), 'Firefly Wedding');
+  assert.strictEqual(h.cleanSeasonTitle('Below: Limited Series'), 'Below');
+  assert.strictEqual(h.cleanSeasonTitle('Kong: Skull Island'), 'Kong: Skull Island');
+  // Giải mã chuỗi JavaScript '...'
+  assert.strictEqual(h.decodeJsString("It\\'s \\\\ \\u00F4 \\x41 \\n \\\""), 'It\'s \\ ô A \n "');
+  assert.strictEqual(h.decodeJsString('{\\"a\\":1}'), '{"a":1}'); // chuỗi vào: {\"a\":1}
+  assert.deepStrictEqual(h.parseTudumTop10('<script>netflix.reactContext.models.graphql = JSON.parse(\'hỏng\');</script>', 'tv'), []);
   assert.strictEqual(TOP10.find((r) => r.type === 'movie' && r.rank === 7).weeks, 84);
   assert.deepStrictEqual(h.parseTudumTop10(tudumTv, 'movie'), []); // trang loạt phim không có khối MOVIES
   assert.deepStrictEqual(h.parseTudumTop10('<html></html>', 'movie'), []);
@@ -337,7 +344,7 @@ function call(handler, path) {
   assert.strictEqual(topMovies[6].releaseInfo, '#7 tại Việt Nam · 84 tuần trong Top 10');
   assert.strictEqual(topSeries.length, 10);
   assert.strictEqual(topSeries[0].name, 'Top10 82682379'); // trang phim đọc theo mã loạt phim
-  // "Firefly Wedding": trang phim không đọc được, dùng tên tiếng Anh trong thẻ Tudum để hiển thị và tìm
+  // "Firefly Wedding": trang phim không đọc được, dùng tên tiếng Anh trên trang Tudum để hiển thị và tìm
   assert.strictEqual(topSeries[7].name, 'Firefly Wedding');
   assert.ok(searches.some(([t, q]) => t === 'tv' && q === 'Firefly Wedding'));
   assert.ok(topSeries.every((x) => x.type === 'series') && topMovies.every((x) => x.type === 'movie'));
@@ -351,7 +358,7 @@ function call(handler, path) {
   assert.strictEqual(t10dbg.weekEnd, '2026-10-18');
   assert.strictEqual(t10dbg.items[6].weeks, 84);
   const firefly = t10dbg.items.find((x) => x.list === 'tv' && x.rank === 8);
-  assert.deepStrictEqual([firefly.netflixId, firefly.seasonId, firefly.fromCard, firefly.via], [83136358, 83136391, true, 'search']);
+  assert.deepStrictEqual([firefly.netflixId, firefly.seasonId, firefly.fromTudum, firefly.via], [83136358, 83136391, true, 'search']);
   assert.ok((await call(h, '/debug.json')).body.needsReview.some((x) => x.title === 'Firefly Wedding')); // không đối chiếu được người
   assert.deepStrictEqual(t10dbg.items.slice(0, 2).map((x) => [x.list, x.rank, x.via]), [['movie', 1, 'wikidata'], ['movie', 2, 'search']]);
   // Danh sách phim mới không bị ảnh hưởng
