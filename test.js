@@ -27,9 +27,12 @@ global.fetch = async (url) => {
   if (u.hostname === 'about.netflix.com') {
     if (u.pathname === '/api/data/releases') {
       if (!apiUp) return { ok: false, status: 403 };
-      assert.strictEqual(u.searchParams.get('language'), 'vi');
+      const lang = u.searchParams.get('language');
+      assert.ok(lang === 'vi' || lang === 'en');
       assert.strictEqual(u.searchParams.get('country'), 'VN');
-      return json(apiPages[u.searchParams.get('page')]);
+      const p = apiPages[u.searchParams.get('page')];
+      // Bản tiếng Anh: cùng videoID, tên khác
+      return json(lang === 'en' ? { ...p, data: p.data.map((r) => ({ ...r, title1: 'EN-' + r.title1 })) } : p);
     }
     if (u.pathname === '/vi/new-to-watch') return { ok: true, text: async () => html };
   }
@@ -37,7 +40,8 @@ global.fetch = async (url) => {
   if (s) {
     const q = u.searchParams.get('query');
     searches.push([s[1], q]);
-    if (q === 'Không có trên TMDB') return json({ results: [] });
+    if (q.includes('Không có trên TMDB')) return json({ results: [] }); // không có cả tên Việt lẫn Anh
+    if (q === 'Cái bẫy') return json({ results: [] });                  // tên Việt không có, tên Anh có
     const media = s[1] === 'multi' ? 'movie' : s[1];
     return json({ results: [{ id: q.length * 1000 + q.charCodeAt(0), media_type: media, poster_path: '/p.jpg', overview: 'Mô tả' }] });
   }
@@ -92,6 +96,9 @@ function call(handler, path) {
   assert.ok(names(series).includes('Bức tường băng'));          // "Mùa 2", không có collection
   assert.ok(names(movies).includes('Phim lẻ A'));               // collection FILM
   assert.ok(names(series).includes('Lupin'));                   // trang 2 thật: "Phần 4"
+  assert.ok(names(series).includes('Cái bẫy'));                 // tìm ra nhờ tên tiếng Anh, vẫn hiện tên Việt
+  assert.ok(searches.some(([t, q]) => t === 'tv' && q === 'EN-Cái bẫy'));
+  assert.strictEqual(dbg.unmatched[0].enTitle, 'EN-Không có trên TMDB');
   assert.ok(names(movies).includes('Vượt qua bão Otis'));       // trang 2 thật: collection FILM
   const minWage = realPage2.data.find((r) => r.title1 === 'Lương tối thiểu');
   if (minWage.startTime > Date.now()) assert.ok(!names(series).includes('Lương tối thiểu')); // chưa ra mắt
@@ -106,6 +113,14 @@ function call(handler, path) {
   assert.deepStrictEqual(times, [...times].sort().reverse());
   assert.deepStrictEqual((await call(h, '/catalog/movie/netflix-new-movie/skip=100.json')).body.metas, []);
   assert.strictEqual((await call(h, '/catalog/movie/khac.json')).status, 404);
+
+  // Dạng request trên Vercel sau rewrite: /api/index?__path=<đường dẫn gốc>
+  assert.strictEqual((await call(h, '/api/index?__path=')).body.id, 'community.netflix.newtowatch.vi');            // trang gốc /
+  assert.strictEqual((await call(h, '/api/index?__path=manifest.json')).body.id, 'community.netflix.newtowatch.vi');
+  assert.strictEqual((await call(h, '/api/index?__path=debug.json')).body.source, 'api');
+  assert.deepStrictEqual((await call(h, '/api/index?__path=catalog/series/netflix-new-series.json')).body.metas, series);
+  assert.deepStrictEqual((await call(h, '/api/index?__path=catalog/movie/netflix-new-movie/skip%3D100.json')).body.metas, []);
+  assert.strictEqual((await call(h, '/api/index?__path=abc')).body.path, '/abc');
 
   // Kịch bản 2: API lỗi → đọc __NEXT_DATA__ trong HTML (trang 1)
   apiUp = false;
