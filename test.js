@@ -248,7 +248,15 @@ function call(handler, path) {
   assert.ok(withDecoy.indexOf('81111111') < withDecoy.indexOf('"videoId":82682379,"seasons"'));
   const pick = h.parseNetflixShow(withDecoy, 82682379);
   assert.strictEqual(pick.seasons[0].episodes.length, 6);
-  assert.deepStrictEqual(pick.showDiag.showsWithSeasons, [{ videoId: 81111111, episodes: false }, { videoId: 82682379, episodes: true }]);
+  assert.deepStrictEqual(pick.showDiag.showsWithSeasons.map((x) => [x.videoId, x.episodes, x.seasons]), [[81111111, false, 0], [82682379, true, 1]]);
+  assert.ok(pick.showDiag.showsWithSeasons[1].firstSeasonKeys.includes('episodes'));
+  // Trường danh sách tập kèm tham số phân trang ("episodes({\"first\":20})"): vẫn đọc được
+  const paged = showPage.replace('"episodes":{"__typename":"EpisodesConnection"', '"episodes({\\"first\\":20})":{"__typename":"EpisodesConnection"');
+  assert.notStrictEqual(paged, showPage);
+  const pagedShow = h.parseNetflixShow(paged, 82682379);
+  assert.strictEqual(pagedShow.seasons[0].episodes.length, 6);
+  assert.deepStrictEqual(pagedShow.showDiag.showsWithSeasons[0].firstSeasonKeys.filter((k) => k.startsWith('episodes')), ['episodes({"first":20})']);
+  assert.deepStrictEqual(h.episodeEdges({ episodesCount: 3 }), []);
   assert.strictEqual(pick.showDiag.matched, true);
   // Mã phim không khớp khối nào có danh sách tập: không lấy nhầm tập của phim khác
   const wrong = h.parseNetflixShow(withDecoy, 99999999);

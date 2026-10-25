@@ -15,7 +15,7 @@ const COLLECTION = { SERIES: 2170013, FILM: 2694103, SPECIALS: 2173907, GAMES: 8
 
 const manifest = {
   id: 'community.netflix.newtowatch.vi',
-  version: '1.7.1',
+  version: '1.7.2',
   name: 'Mới trên Netflix (VN)',
   description: 'Phim và loạt phim mới và sắp ra mắt trên Netflix Việt Nam (about.netflix.com/vi/new-to-watch), Top 10 tuần tại Việt Nam (netflix.com/tudum/top10/vietnam)',
   // meta: trang chi tiết tiếng Việt (mô tả, danh sách tập) cho các phim trong danh sách của addon.
@@ -168,6 +168,16 @@ function seasonNumber(node, index) {
   return m ? Number(m[1]) : index + 1;
 }
 
+// Danh sách tập của một mùa. Trường có thể tên "episodes" hoặc kèm tham số phân trang ("episodes({\"first\":20})")
+// tuỳ phiên bản trang Netflix trả về: lấy trường đầu tiên có tên bắt đầu bằng "episodes" và có danh sách.
+function episodeEdges(seasonNode) {
+  if (!seasonNode) return [];
+  for (const [key, value] of Object.entries(seasonNode)) {
+    if (key.startsWith('episodes') && Array.isArray(value?.edges) && value.edges.length) return value.edges;
+  }
+  return [];
+}
+
 // Danh sách mùa và tập (tiếng Việt) nằm trong khối Show của models.graphqlClcs:
 // {"__typename":"Show",...,"seasons":{"__typename":"SeasonsConnection","edges":[{node: Season{episodes:{edges:[{node: Episode}]}}}]}}
 // Trang còn có khối Show của phim khác (mục "Tác phẩm khác"), có trường seasons nhưng không có danh sách tập.
@@ -185,14 +195,20 @@ function parseNetflixShow(html, wantId) {
       if (!candidates.some((c) => c.videoId === show.videoId)) candidates.push(show);
     } catch { /* khối hỏng: bỏ qua */ }
   }
-  const hasEpisodes = (sh) => (sh.seasons?.edges || []).some((se) => se?.node?.episodes?.edges?.length);
+  const hasEpisodes = (sh) => (sh.seasons?.edges || []).some((se) => episodeEdges(se?.node).length);
   const show = wantId
     ? candidates.find((sh) => Number(sh.videoId) === Number(wantId) && hasEpisodes(sh))
     : candidates.find(hasEpisodes);
   const showDiag = {
     pageBytes: html.length,
     hasGraphqlClcs: html.includes('"graphqlClcs"'),
-    showsWithSeasons: candidates.map((sh) => ({ videoId: sh.videoId, episodes: hasEpisodes(sh) })),
+    showsWithSeasons: candidates.map((sh) => ({
+      videoId: sh.videoId,
+      episodes: hasEpisodes(sh),
+      seasons: (sh.seasons?.edges || []).length,
+      // Tên các trường của mùa đầu tiên: cho biết danh sách tập nằm ở trường nào nếu không đọc được
+      firstSeasonKeys: Object.keys(sh.seasons?.edges?.[0]?.node || {}),
+    })),
     matched: !!show,
   };
   if (!show) return { showDiag };
@@ -200,7 +216,7 @@ function parseNetflixShow(html, wantId) {
     const node = se?.node || {};
     return {
       number: seasonNumber(node, i),
-      episodes: (node.episodes?.edges || [])
+      episodes: episodeEdges(node)
         .map((e) => e?.node)
         .filter((ep) => ep && Number(ep.number))
         .map((ep) => ({
@@ -580,7 +596,7 @@ async function fetchWikidata(netflixIds) {
   try {
     const url = `${WIKIDATA}?format=json&query=${encodeURIComponent(wikidataQuery(netflixIds))}`;
     const r = await fetch(url, {
-      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.7.1 (Stremio catalog addon)' },
+      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.7.2 (Stremio catalog addon)' },
     });
     if (!r.ok) throw new Error(`Wikidata ${r.status}`);
     return parseWikidata(await r.json());
@@ -836,3 +852,4 @@ module.exports.cleanSeasonTitle = cleanSeasonTitle;
 module.exports.decodeJsString = decodeJsString;
 module.exports.seasonNumber = seasonNumber;
 module.exports.parseNetflixShow = parseNetflixShow;
+module.exports.episodeEdges = episodeEdges;

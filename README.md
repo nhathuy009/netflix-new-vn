@@ -29,7 +29,7 @@ Addon cung cấp danh sách và trang chi tiết tiếng Việt cho các phim tr
 ### Trang chi tiết tiếng Việt
 
 1. Với các phim trong 6 dòng, addon trả trang chi tiết lấy từ trang phim Netflix: mô tả tiếng Việt, thể loại, đạo diễn, diễn viên.
-2. Loạt phim có thêm danh sách tập (tên tập, tóm tắt tiếng Việt, ảnh) đọc từ khối Show trong `models.graphqlClcs` của trang phim. Trang còn có khối Show của phim khác (mục "Tác phẩm khác"), nên addon chọn khối có mã trùng mã phim và có danh sách tập. Mã mỗi tập dạng `tt…:mùa:tập`, để các addon stream tìm được nguồn phát. Số mùa lấy từ nhãn "Mùa N"; loạt phim ngắn không có số thì theo thứ tự.
+2. Loạt phim có thêm danh sách tập (tên tập, tóm tắt tiếng Việt, ảnh) đọc từ khối Show trong `models.graphqlClcs` của trang phim. Trang còn có khối Show của phim khác (mục "Tác phẩm khác"), nên addon chọn khối có mã trùng mã phim và có danh sách tập. Trường danh sách tập có thể tên `episodes` hoặc kèm tham số phân trang (`episodes({"first":20})`) tuỳ phiên bản trang. Mã mỗi tập dạng `tt…:mùa:tập`, để các addon stream tìm được nguồn phát. Số mùa lấy từ nhãn "Mùa N"; loạt phim ngắn không có số thì theo thứ tự.
 3. Phim không nằm trong 6 dòng, hoặc loạt phim không đọc được danh sách tập: trả 404 để Stremio dùng addon dữ liệu phim kế tiếp (TMDB, Cinemeta).
 4. Stremio hỏi trang chi tiết của mọi phim. Khi dữ liệu chưa tải xong (lần đầu mất 20–40 giây), addon trả 404 ngay để không làm chậm phim khác.
 5. Stremio lấy trang chi tiết từ addon đầu tiên trong danh sách có dữ liệu, nên cần kéo addon này lên **trên** các addon dữ liệu phim khác (TMDB, Cinemeta) trong mục Addons.
@@ -67,7 +67,7 @@ Mở `http://127.0.0.1:7000/debug.json` để kiểm tra:
 - `matchedItems`: mỗi tựa khớp với mã TMDB/IMDb nào, qua nguồn nào (`wikidata` hoặc `search`), và với `search` thì các ứng viên đã thử kèm điểm (`điểm 4+12` = điểm theo tên/ngày + điểm đối chiếu người).
 - `needsReview`: các tựa khớp theo tên mà không trùng đạo diễn hay diễn viên nào, kèm link TMDB và Netflix để kiểm tra tay.
 - `unmatched`: các tựa không khớp, kèm các ứng viên đã thử.
-- `detail`: số phim lẻ và loạt phim có trang chi tiết (không đếm trùng); loạt phim không có danh sách tập (các phim này dùng trang chi tiết của addon khác), kèm chẩn đoán trang phim: kích thước trang (`pageBytes`), có khối `graphqlClcs` không, các khối Show có `seasons` (mã phim, có danh sách tập không), và có khối nào trùng mã phim không (`matched`).
+- `detail`: số phim lẻ và loạt phim có trang chi tiết (không đếm trùng); loạt phim không có danh sách tập (các phim này dùng trang chi tiết của addon khác), kèm chẩn đoán trang phim: kích thước trang (`pageBytes`), có khối `graphqlClcs` không, các khối Show có `seasons` (mã phim, có danh sách tập không, số mùa, tên các trường của mùa đầu tiên), và có khối nào trùng mã phim không (`matched`).
 - `upcoming`: các tựa sắp ra mắt, ngày ra mắt, và kết quả khớp của từng tựa.
 - `top10`: địa chỉ và lỗi (nếu có) của từng bảng (`lists`), tuần xếp hạng (`weekEnd`), số tựa khớp, và từng tựa theo thứ hạng kèm số tuần trong Top 10.
 
