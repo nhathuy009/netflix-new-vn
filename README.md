@@ -21,7 +21,7 @@ Addon chỉ cung cấp danh sách. Bấm vào phim, Stremio dùng các addon str
 4. Tải trang phim Netflix của từng tựa (`netflix.com/vn/title/<id>`) để lấy loại chính xác (phim/loạt phim), đạo diễn, diễn viên, thể loại, mô tả tiếng Việt và cờ Netflix Original.
 5. Tìm IMDb ID cho từng tựa:
    - **Wikidata trước:** tra thẳng theo mã Netflix (thuộc tính `P1874`), một request cho cả danh sách. Chính xác tuyệt đối, nhưng phim mới thường chưa được nhập.
-   - **Không có trên Wikidata:** tìm TMDB bằng tên tiếng Việt và tiếng Anh, chấm điểm ứng viên theo loại, tên và ngày ra mắt so với ngày lên Netflix. Với Netflix Original chiếu lần đầu, ứng viên ra trước ngày lên Netflix hơn 1 năm bị loại. Với 3 ứng viên tốt nhất, đối chiếu đạo diễn và diễn viên với trang Netflix (+6 nếu trùng đạo diễn, +6 nếu trùng từ 2 diễn viên, −4 nếu không trùng ai), rồi lấy ứng viên tổng điểm cao nhất có IMDb ID.
+   - **Không có trên Wikidata:** tìm TMDB bằng tên tiếng Việt và tiếng Anh (với Netflix Original chiếu lần đầu, tìm thêm một lượt lọc theo năm lên Netflix), xét toàn bộ 20 kết quả mỗi lượt, chấm điểm ứng viên theo loại, tên và ngày ra mắt so với ngày lên Netflix. Với Netflix Original chiếu lần đầu, ứng viên ra trước ngày lên Netflix hơn 1 năm bị loại. Với 3 ứng viên tốt nhất, đối chiếu đạo diễn và diễn viên với trang Netflix (+6 nếu trùng đạo diễn, +6 nếu trùng từ 2 diễn viên, −4 nếu không trùng ai), rồi lấy ứng viên tổng điểm cao nhất có IMDb ID.
    - Tựa không có IMDb ID sẽ bị bỏ (Stremio cần ID `tt...`).
 6. Kết quả được cache 6 giờ. Lần tải đầu mất khoảng 20–40 giây.
 

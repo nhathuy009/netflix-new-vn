@@ -15,7 +15,7 @@ const COLLECTION = { SERIES: 2170013, FILM: 2694103, SPECIALS: 2173907, GAMES: 8
 
 const manifest = {
   id: 'community.netflix.newtowatch.vi',
-  version: '1.3.2',
+  version: '1.3.3',
   name: 'Mới trên Netflix (VN)',
   description: 'Danh sách phim và loạt phim mới lên Netflix Việt Nam, lấy từ about.netflix.com/vi/new-to-watch',
   resources: ['catalog'],
@@ -183,19 +183,36 @@ async function tmdb(path, params = {}) {
   return r.json();
 }
 
-const PER_QUERY = 5;  // số kết quả TMDB lấy mỗi lần tìm
-const MAX_CHECK = 3;  // số ứng viên tốt nhất được kiểm tra IMDb ID
+const MAX_CHECK = 3;  // số ứng viên tốt nhất được kiểm tra IMDb ID và đối chiếu người
 const DAY = 24 * 3600 * 1000;
 
-async function searchTmdb(title, hint) {
+// Trả về toàn bộ kết quả trang đầu (TMDB trả tối đa 20). Không cắt bớt ở đây: việc loại ứng viên
+// không hợp lệ phải làm trên đủ kết quả, nếu không ứng viên đúng ở vị trí thứ 6 trở đi sẽ bị bỏ sót.
+// year: chỉ lấy tựa ra mắt năm đó (cần biết loại, vì /search/multi không lọc được theo năm)
+async function searchTmdb(title, hint, year) {
   const q = { query: title, language: 'vi-VN', include_adult: 'false' };
+  if (year) {
+    if (!hint) return [];
+    q[hint === 'tv' ? 'first_air_date_year' : 'primary_release_year'] = String(year);
+    const res = await tmdb(`/search/${hint}`, q);
+    return (res.results || []).map((x) => ({ ...x, media_type: hint }));
+  }
   if (hint) {
     const res = await tmdb(`/search/${hint}`, q);
-    const list = (res.results || []).slice(0, PER_QUERY).map((x) => ({ ...x, media_type: hint }));
+    const list = (res.results || []).map((x) => ({ ...x, media_type: hint }));
     if (list.length) return list;
   }
   const res = await tmdb('/search/multi', q);
-  return (res.results || []).filter((x) => x.media_type === 'movie' || x.media_type === 'tv').slice(0, PER_QUERY);
+  return (res.results || []).filter((x) => x.media_type === 'movie' || x.media_type === 'tv');
+}
+
+// Năm cần lọc khi tìm Netflix Original chiếu lần đầu: năm lên Netflix (giờ Việt Nam);
+// lên Netflix trong tháng 1 thì thêm năm trước, phòng trường hợp ra mắt cuối năm trước
+function searchYears(item) {
+  if (!item.nf?.isOriginal || isLaterSeason(item) || !item.startTime || !item.hint) return [];
+  const d = new Date(item.startTime + 7 * 3600 * 1000);
+  const y = d.getUTCFullYear();
+  return d.getUTCMonth() === 0 ? [y, y - 1] : [y];
 }
 
 const norm = (s) => nfc(s).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
@@ -222,18 +239,24 @@ function scoreCandidate(c, item) {
   return s;
 }
 
-// Gom ứng viên từ tên Việt và tên Anh, xếp theo điểm (bằng điểm thì giữ thứ tự TMDB)
+// Gom ứng viên từ tên Việt và tên Anh (lượt lọc theo năm trước, rồi lượt thường), chấm điểm và loại
+// trên toàn bộ kết quả, xếp theo điểm (bằng điểm thì giữ thứ tự gom)
 async function findCandidates(item) {
   const queries = [item.title, item.enTitle].filter((t, i, a) => t && a.indexOf(t) === i);
+  const searches = [
+    ...searchYears(item).flatMap((y) => queries.map((q) => [q, y])),
+    ...queries.map((q) => [q, undefined]),
+  ];
   const seen = new Set();
   const list = [];
-  for (const q of queries) {
-    for (const c of await searchTmdb(q, item.hint)) {
+  for (const [q, year] of searches) {
+    for (const c of await searchTmdb(q, item.hint, year)) {
       const key = `${c.media_type}/${c.id}`;
       if (!seen.has(key)) { seen.add(key); list.push({ ...c, score: scoreCandidate(c, item) }); }
     }
   }
-  return list.filter((c) => c.score !== -Infinity).sort((a, b) => b.score - a.score);
+  const valid = list.filter((c) => c.score !== -Infinity).sort((a, b) => b.score - a.score);
+  return { valid, total: list.length };
 }
 
 function vnDate(ms) {
@@ -309,8 +332,16 @@ function peopleScore(details, nf) {
 
 // Không có trên Wikidata: tìm theo tên, chấm điểm, rồi đối chiếu đạo diễn/diễn viên với các ứng viên tốt nhất
 async function resolveBySearch(item) {
-  const candidates = await findCandidates(item);
-  if (!candidates.length) return { ...item, error: 'không tìm thấy trên TMDB' };
+  const { valid: candidates, total } = await findCandidates(item);
+  if (!candidates.length) {
+    const years = searchYears(item);
+    return {
+      ...item,
+      error: total
+        ? `không có ứng viên hợp lệ: đã xét ${total} kết quả TMDB, loại cả ${total} (ra mắt sau ngày lên Netflix, hoặc là Netflix Original mà ra mắt trước đó hơn 1 năm)${years.length ? `; có tìm lọc năm ${years.join(', ')}` : ''}`
+        : `không tìm thấy trên TMDB${years.length ? ` (kể cả khi lọc năm ${years.join(', ')})` : ''}`,
+    };
+  }
   const checked = [];
   for (const c of candidates.slice(0, MAX_CHECK)) {
     const extra = c.media_type === 'tv' ? 'external_ids,aggregate_credits' : 'external_ids,credits';
@@ -378,7 +409,7 @@ async function fetchWikidata(netflixIds) {
   try {
     const url = `${WIKIDATA}?format=json&query=${encodeURIComponent(wikidataQuery(netflixIds))}`;
     const r = await fetch(url, {
-      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.3.2 (Stremio catalog addon)' },
+      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.3.3 (Stremio catalog addon)' },
     });
     if (!r.ok) throw new Error(`Wikidata ${r.status}`);
     return parseWikidata(await r.json());
@@ -501,3 +532,4 @@ module.exports.parseNetflixTitle = parseNetflixTitle;
 module.exports.peopleScore = peopleScore;
 module.exports.isLaterSeason = isLaterSeason;
 module.exports.fetchNetflixTitle = fetchNetflixTitle;
+module.exports.searchYears = searchYears;

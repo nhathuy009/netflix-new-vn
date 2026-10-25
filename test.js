@@ -54,6 +54,9 @@ global.fetch = async (url, opts = {}) => {
     // Mã mùa 81720672: trang phim ghi mã gốc 81720671 (Netflix chuyển hướng sang /title/81720671)
     if (u.pathname === '/vn/title/81720672') return { ok: true, url: 'https://www.netflix.com/vn/title/81720671', text: async () => fakeTitle({ type: 'Show', videoId: 81720671, topLevelVideoId: 81720671 }) };
     // Trang không ghi topLevelVideoId: lấy mã từ địa chỉ sau chuyển hướng
+    // "#Yêu" và "Cơn bão": Netflix Original chiếu lần đầu
+    if (u.pathname === '/vn/title/81680909') return { ok: true, text: async () => fakeTitle({ type: 'Show', isOriginal: true, topLevelVideoId: 81680908 }) };
+    if (u.pathname === '/vn/title/81786721') return { ok: true, text: async () => fakeTitle({ type: 'Movie', isOriginal: true, topLevelVideoId: 81786721 }) };
     if (u.pathname === '/vn/title/555') return { ok: true, url: 'https://www.netflix.com/vn/title/554?fromWatch=true', text: async () => fakeTitle({ type: 'Show' }) };
     return { ok: false, status: 404 };
   }
@@ -84,7 +87,21 @@ global.fetch = async (url, opts = {}) => {
   const s = u.pathname.match(/\/search\/(movie|tv|multi)$/);
   if (s) {
     const q = u.searchParams.get('query');
-    searches.push([s[1], q]);
+    const year = u.searchParams.get('first_air_date_year') || u.searchParams.get('primary_release_year');
+    searches.push([s[1], q, year]);
+    // "#Yêu": 20 loạt phim "Love" cũ chiếm hết trang đầu; chỉ khi lọc năm 2026 mới ra tv/302882
+    if (q === '#Yêu' || q === 'EN-#Yêu') {
+      if (year === '2026') return json({ results: [{ id: 302882, name: 'Love', first_air_date: '2026-10-02' }] });
+      return json({ results: Array.from({ length: 20 }, (_, i) => ({ id: 50000 + i, name: 'Love', first_air_date: `${2000 + (i % 10)}-01-01` })) });
+    }
+    // "Cơn bão": phim đúng ở vị trí thứ 6, sau 5 phim cũ trùng tên (trước đây chỉ xét 5 kết quả đầu)
+    if (q === 'Cơn bão' || q === 'EN-Cơn bão') {
+      if (year) return json({ results: [] }); // tách riêng: chỉ kiểm tra việc xét đủ kết quả
+      return json({ results: [
+        ...Array.from({ length: 5 }, (_, i) => ({ id: 60000 + i, title: 'Cơn bão', release_date: `${2015 + i}-05-01` })),
+        { id: 1614937, title: 'The Storm', release_date: '2026-10-15' },
+      ] });
+    }
     if (q.includes('Không có trên TMDB')) return json({ results: [] }); // không có cả tên Việt lẫn Anh
     if (q === 'Bác sĩ X') return json({ results: [] });                 // tên Việt không có, tên Anh có
     // Phim trùng tên đứng trước phim Netflix đúng (movie/1458857)
@@ -180,6 +197,14 @@ function call(handler, path) {
   assert.ok(sc({ name: 'X', first_air_date: '2022-09-13' }, { ...orig, subtitle: 'Cyberpunk: Edgerunners 2' }) > -Infinity);
   assert.ok(sc({ name: 'X', release_date: '1990-01-01' }, { nf: { isOriginal: false } }) > -Infinity);              // phim mua bản quyền: giữ
   assert.strictEqual(h.isLaterSeason({ subtitle: 'Cyberpunk: Edgerunners 2' }), true);
+  // Năm lọc khi tìm: chỉ cho Netflix Original chiếu lần đầu, theo giờ Việt Nam, tháng 1 thì thêm năm trước
+  const yr = (iso, extra) => h.searchYears({ hint: 'tv', nf: { isOriginal: true }, startTime: Date.parse(iso), ...extra });
+  assert.deepStrictEqual(yr('2026-10-02T00:00:00+07:00'), [2026]);
+  assert.deepStrictEqual(yr('2026-01-15T00:00:00+07:00'), [2026, 2025]);
+  assert.deepStrictEqual(yr('2026-01-01T00:30:00+07:00'), [2026, 2025]); // 31/12 UTC nhưng đã 1/1 ở Việt Nam
+  assert.deepStrictEqual(yr('2026-10-02T00:00:00+07:00', { subtitle: 'Mùa 3' }), []);
+  assert.deepStrictEqual(yr('2026-10-02T00:00:00+07:00', { nf: { isOriginal: false } }), []);
+  assert.deepStrictEqual(yr('2026-10-02T00:00:00+07:00', { hint: null }), []);
   assert.strictEqual(h.isLaterSeason({ subtitle: 'Mùa 1' }), false);
   assert.strictEqual(h.isLaterSeason({ subtitle: 'Schumacher 1994 – Huyền thoại ra đời' }), false);
   assert.strictEqual(h.isLaterSeason({ subtitle: 'Loạt phim truyền hình ngắn' }), false);
@@ -222,11 +247,18 @@ function call(handler, path) {
   const trap = series.find((x) => x.name === 'Cái bẫy');
   assert.strictEqual(trap.id, 'tt88888888');
   assert.deepStrictEqual(dbg.matchedItems.find((x) => x.title === 'Cái bẫy'), { title: 'Cái bẫy', via: 'wikidata', tmdb: 'tv/283371', imdb: 'tt88888888' });
-  assert.strictEqual(dbg.seasonIds, 1);
+  assert.strictEqual(dbg.seasonIds, 2); // Cái bẫy, #Yêu
+  // "#Yêu": chỉ lượt tìm lọc năm 2026 mới tìm ra loạt phim đúng
+  assert.strictEqual(series.find((x) => x.name === '#Yêu').id, 'tt302882');
+  assert.ok(searches.some(([t, q, y]) => t === 'tv' && q === '#Yêu' && y === '2026'));
+  // "Cơn bão": phim đúng ở vị trí thứ 6 vẫn được xét
+  assert.strictEqual(movies.find((x) => x.name === 'Cơn bão').id, 'tt1614937');
+  // Không phải Netflix Original thì không tìm lọc năm
+  assert.ok(!searches.some(([, q, y]) => q === 'Phim lẻ A' && y));
   assert.strictEqual(dbg.matchedViaWikidata, 5);
 
   // Metadata từ trang phim Netflix
-  assert.strictEqual(dbg.netflixPages, 2);
+  assert.strictEqual(dbg.netflixPages, 4); // Sống đời, Cái bẫy, #Yêu, Cơn bão
   assert.ok(song.description.startsWith('Người mẹ đơn thân'));   // mô tả tiếng Việt của Netflix
   assert.ok(song.releaseInfo.endsWith('· Netflix Original'));
   assert.deepStrictEqual(song.links.filter((l) => l.category === 'Directors').map((l) => l.name), ['Tyler Perry']);
