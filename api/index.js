@@ -15,7 +15,7 @@ const COLLECTION = { SERIES: 2170013, FILM: 2694103, SPECIALS: 2173907, GAMES: 8
 
 const manifest = {
   id: 'community.netflix.newtowatch.vi',
-  version: '1.3.0',
+  version: '1.3.2',
   name: 'Mới trên Netflix (VN)',
   description: 'Danh sách phim và loạt phim mới lên Netflix Việt Nam, lấy từ about.netflix.com/vi/new-to-watch',
   resources: ['catalog'],
@@ -140,6 +140,8 @@ function parseNetflixTitle(html) {
     cast: names(d.persons?.actors),
     isOriginal: !!d.metaData.isOriginal,
     background: d.artwork?.heroImage?.url,
+    // Mã gốc của tựa. Với loạt phim, danh sách "Mới trên Netflix" cho mã của mùa, trang phim cho mã của cả loạt phim.
+    topId: Number(d.metaData.topLevelVideoId || d.metaData.videoId) || null,
   };
 }
 
@@ -148,7 +150,11 @@ async function fetchNetflixTitle(id) {
   try {
     const r = await fetch(titleUrl(id), { headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'text/html', 'Accept-Language': LANG } });
     if (!r.ok) return null;
-    return parseNetflixTitle(await r.text());
+    const nf = parseNetflixTitle(await r.text());
+    // Trang không ghi topLevelVideoId thì lấy mã trong địa chỉ sau khi Netflix chuyển hướng (…/title/<mã gốc>)
+    const redirected = Number((r.url || '').match(/\/title\/(\d+)/)?.[1]) || null;
+    if (nf && !nf.topId) nf.topId = redirected;
+    return nf;
   } catch {
     return null;
   }
@@ -323,7 +329,7 @@ async function resolveBySearch(item) {
 }
 
 function resolve(item, wikidata) {
-  const w = wikidata.get(String(item.netflixId));
+  const w = wikidata.get(String(item.showId)) || wikidata.get(String(item.netflixId));
   return w ? resolveFromWikidata(item, w) : resolveBySearch(item);
 }
 
@@ -372,7 +378,7 @@ async function fetchWikidata(netflixIds) {
   try {
     const url = `${WIKIDATA}?format=json&query=${encodeURIComponent(wikidataQuery(netflixIds))}`;
     const r = await fetch(url, {
-      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.3 (Stremio catalog addon)' },
+      headers: { Accept: 'application/sparql-results+json', 'User-Agent': 'netflix-new-stremio/1.3.2 (Stremio catalog addon)' },
     });
     if (!r.ok) throw new Error(`Wikidata ${r.status}`);
     return parseWikidata(await r.json());
@@ -396,15 +402,15 @@ async function load() {
       .filter((r) => !seen.has(r.videoID) && seen.add(r.videoID))
       .map((r) => ({ ...toItem(r), enTitle: enTitles.get(r.videoID) }));
     const released = items.filter((x) => !x.startTime || x.startTime <= Date.now()); // bỏ tựa chưa ra mắt
-    // Trang phim Netflix: loại chính xác, đạo diễn, diễn viên, mô tả. Song song với Wikidata.
-    const [pages, wikidata] = await Promise.all([
-      mapInBatches(released, (x) => fetchNetflixTitle(x.netflixId)),
-      fetchWikidata(released.map((x) => String(x.netflixId))),
-    ]);
+    // Trang phim Netflix: loại chính xác, mã gốc, đạo diễn, diễn viên, mô tả
+    const pages = await mapInBatches(released, (x) => fetchNetflixTitle(x.netflixId));
     released.forEach((x, i) => {
       x.nf = pages[i];
       if (x.nf?.type) x.hint = x.nf.type; // Netflix ghi rõ loại → ưu tiên hơn mọi cách đoán
+      x.showId = x.nf?.topId || x.netflixId;
     });
+    // Wikidata lưu mã gốc của loạt phim, nên tra bằng cả mã gốc lẫn mã trong danh sách
+    const wikidata = await fetchWikidata([...new Set(released.flatMap((x) => [String(x.showId), String(x.netflixId)]))]);
     const resolved = await resolveAll(released, wikidata);
     const data = {
       fetchedAt: new Date().toISOString(), source, totalItems, read: items.length, released: released.length,
@@ -465,14 +471,18 @@ async function handler(req, res) {
         read: d.read,
         released: d.released,
         netflixPages: d.netflixPages,
+        seasonIds: d.items.filter((x) => x.showId !== x.netflixId).length, // số tựa có mã trong danh sách khác mã gốc
         matched: d.items.filter((x) => x.meta).length,
         matchedViaWikidata: d.items.filter((x) => x.via === 'wikidata').length,
         matchedItems: d.items.filter((x) => x.meta).map((x) => ({ title: x.title, via: x.via, tmdb: x.tmdb, imdb: x.meta.id, tried: x.tried })),
         needsReview: d.items.filter((x) => x.needsReview).map((x) => ({
           title: x.title, enTitle: x.enTitle, imdb: x.meta.id,
-          tmdb: `https://www.themoviedb.org/${x.tmdb}`, netflix: titleUrl(x.netflixId),
+          tmdb: `https://www.themoviedb.org/${x.tmdb}`, netflix: titleUrl(x.showId),
         })),
-        unmatched: d.items.filter((x) => !x.meta).map((x) => ({ title: x.title, enTitle: x.enTitle, netflixId: x.netflixId, reason: x.error })),
+        unmatched: d.items.filter((x) => !x.meta).map((x) => ({
+          title: x.title, enTitle: x.enTitle, netflixId: x.netflixId,
+          showId: x.showId !== x.netflixId ? x.showId : undefined, reason: x.error,
+        })),
       });
     }
 
@@ -490,3 +500,4 @@ module.exports.parseWikidata = parseWikidata;
 module.exports.parseNetflixTitle = parseNetflixTitle;
 module.exports.peopleScore = peopleScore;
 module.exports.isLaterSeason = isLaterSeason;
+module.exports.fetchNetflixTitle = fetchNetflixTitle;

@@ -27,9 +27,12 @@ const WD_ROWS = [
   { netflix: '82027563', imdb: 'tt37027309', tmdbMovie: '1487317' },
   { netflix: '81952372', imdb: 'tt43738050' },                         // Giàu nứt vách... : TMDB không có
 ];
+// Giả lập: Wikidata chỉ biết mã gốc của loạt phim "Cái bẫy" (81720671), không biết mã mùa trong danh sách (81720672)
+WD_ROWS.push({ netflix: '81720671', imdb: 'tt88888888', tmdbTv: '283371' });
 const wdBindings = (ids) => WD_ROWS.filter((r) => ids.includes(r.netflix)).map((r) => {
   const b = { netflix: { value: r.netflix }, imdb: { value: r.imdb } };
   if (r.tmdbMovie) b.tmdbMovie = { value: r.tmdbMovie };
+  if (r.tmdbTv) b.tmdbTv = { value: r.tmdbTv };
   return b;
 });
 
@@ -48,6 +51,10 @@ global.fetch = async (url, opts = {}) => {
   }
   if (u.hostname === 'www.netflix.com') {
     if (u.pathname === '/vn/title/82023496') return { ok: true, text: async () => titlePage };
+    // Mã mùa 81720672: trang phim ghi mã gốc 81720671 (Netflix chuyển hướng sang /title/81720671)
+    if (u.pathname === '/vn/title/81720672') return { ok: true, url: 'https://www.netflix.com/vn/title/81720671', text: async () => fakeTitle({ type: 'Show', videoId: 81720671, topLevelVideoId: 81720671 }) };
+    // Trang không ghi topLevelVideoId: lấy mã từ địa chỉ sau chuyển hướng
+    if (u.pathname === '/vn/title/555') return { ok: true, url: 'https://www.netflix.com/vn/title/554?fromWatch=true', text: async () => fakeTitle({ type: 'Show' }) };
     return { ok: false, status: 404 };
   }
   const det = u.pathname.match(/^\/3\/(movie|tv)\/(\d+)$/);
@@ -79,7 +86,7 @@ global.fetch = async (url, opts = {}) => {
     const q = u.searchParams.get('query');
     searches.push([s[1], q]);
     if (q.includes('Không có trên TMDB')) return json({ results: [] }); // không có cả tên Việt lẫn Anh
-    if (q === 'Cái bẫy') return json({ results: [] });                  // tên Việt không có, tên Anh có
+    if (q === 'Bác sĩ X') return json({ results: [] });                 // tên Việt không có, tên Anh có
     // Phim trùng tên đứng trước phim Netflix đúng (movie/1458857)
     if (q === 'Sống đời' || q === 'EN-Sống đời') return json({ results: [
       { id: 1058827, media_type: 'movie', title: 'Sống đời', release_date: '2026-09-30' }, // trùng tên, cùng đợt, có IMDb: chỉ khác người
@@ -94,6 +101,10 @@ global.fetch = async (url, opts = {}) => {
   throw new Error('fetch không mong đợi: ' + url);
 };
 process.env.TMDB_API_KEY = 'testkey';
+
+function fakeTitle(metaData) {
+  return '<script>netflix.reactContext = {"models":{"nmTitleGQL":' + JSON.stringify({ data: { metaData, copy: {}, persons: {} } }) + '}};</script>';
+}
 
 function freshHandler() {
   delete require.cache[require.resolve('./api/index')];
@@ -141,6 +152,10 @@ function call(handler, path) {
   assert.strictEqual(nf.isOriginal, true);
   assert.ok(nf.background.startsWith('https://occ-0-58-325.1.nflxso.net/'));
   assert.strictEqual(h.parseNetflixTitle('<html>không có dữ liệu</html>'), null);
+  assert.strictEqual(nf.topId, 82023496); // phim lẻ: mã gốc trùng mã trong danh sách
+  assert.strictEqual((await h.fetchNetflixTitle(81720672)).topId, 81720671);
+  assert.strictEqual((await h.fetchNetflixTitle(81720672)).type, 'tv');
+  assert.strictEqual((await h.fetchNetflixTitle(555)).topId, 554); // không có topLevelVideoId: theo địa chỉ chuyển hướng
 
   // Đối chiếu người
   const crew = (d) => ({ crew: [{ job: 'Director', name: d }] });
@@ -190,9 +205,9 @@ function call(handler, path) {
   assert.ok(names(series).includes('Bức tường băng'));          // "Mùa 2", không có collection
   assert.ok(names(movies).includes('Phim lẻ A'));               // collection FILM
   assert.ok(names(series).includes('Lupin'));                   // trang 2 thật: "Phần 4"
-  assert.ok(names(series).includes('Cái bẫy'));                 // tìm ra nhờ tên tiếng Anh, vẫn hiện tên Việt
+  assert.ok(names(series).includes('Bác sĩ X'));                // tìm ra nhờ tên tiếng Anh, vẫn hiện tên Việt
   // Wikidata: tra thẳng theo mã Netflix, không qua tên
-  assert.strictEqual(dbg.matchedViaWikidata, 4);
+  assert.ok(dbg.matchedViaWikidata >= 4);
   assert.ok(wdHeaders['User-Agent']);
   const song = movies.find((x) => x.name === 'Sống đời');
   assert.strictEqual(song.id, 'tt36429458');
@@ -203,15 +218,23 @@ function call(handler, path) {
   assert.strictEqual(giau.id, 'tt43738050');
   assert.ok(giau.poster.startsWith('https://dnm.nflximg.net/'));
   assert.ok(!searches.some(([, q]) => q === 'Sống đời')); // không tốn lượt tìm theo tên
+  // "Cái bẫy": tra Wikidata bằng mã gốc của loạt phim, không phải mã mùa trong danh sách
+  const trap = series.find((x) => x.name === 'Cái bẫy');
+  assert.strictEqual(trap.id, 'tt88888888');
+  assert.deepStrictEqual(dbg.matchedItems.find((x) => x.title === 'Cái bẫy'), { title: 'Cái bẫy', via: 'wikidata', tmdb: 'tv/283371', imdb: 'tt88888888' });
+  assert.strictEqual(dbg.seasonIds, 1);
+  assert.strictEqual(dbg.matchedViaWikidata, 5);
+
   // Metadata từ trang phim Netflix
-  assert.strictEqual(dbg.netflixPages, 1);
+  assert.strictEqual(dbg.netflixPages, 2);
   assert.ok(song.description.startsWith('Người mẹ đơn thân'));   // mô tả tiếng Việt của Netflix
   assert.ok(song.releaseInfo.endsWith('· Netflix Original'));
   assert.deepStrictEqual(song.links.filter((l) => l.category === 'Directors').map((l) => l.name), ['Tyler Perry']);
   assert.deepStrictEqual(song.links.filter((l) => l.category === 'Genres').map((l) => l.name), ['Lãng mạn', 'Phim chính kịch']);
   assert.strictEqual(song.links.filter((l) => l.category === 'Cast').length, 5);
   assert.strictEqual(song.links[0].url, 'stremio:///search?search=L%C3%A3ng%20m%E1%BA%A1n');
-  assert.ok(searches.some(([t, q]) => t === 'tv' && q === 'EN-Cái bẫy'));
+  assert.ok(searches.some(([t, q]) => t === 'tv' && q === 'EN-Bác sĩ X'));
+  assert.ok(!searches.some(([, q]) => q.includes('Cái bẫy'))); // đã khớp qua Wikidata, không tìm theo tên
   assert.strictEqual(dbg.unmatched[0].enTitle, 'EN-Không có trên TMDB');
   assert.ok(names(movies).includes('Vượt qua bão Otis'));       // trang 2 thật: collection FILM
   const minWage = realPage2.data.find((r) => r.title1 === 'Lương tối thiểu');
