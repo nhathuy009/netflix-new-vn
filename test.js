@@ -67,18 +67,18 @@ global.fetch = async (url, opts = {}) => {
     return json({ results: { bindings: wdBindings(ids) } });
   }
   if (u.hostname === 'www.netflix.com') {
-    if (u.pathname.startsWith('/vn/title/')) titleHeaders = opts.headers;
+    if (u.pathname.startsWith('/vn-vi/title/')) titleHeaders = opts.headers;
     // Lỗi lần đầu, lần thử lại thì được
-    if (u.pathname === '/vn/title/777') return (flaky.n++ === 0) ? { ok: false, status: 503 } : { ok: true, text: async () => titlePage };
+    if (u.pathname === '/vn-vi/title/777') return (flaky.n++ === 0) ? { ok: false, status: 503 } : { ok: true, text: async () => titlePage };
     // Được lần đầu; sau đó lỗi cả hai lần
-    if (u.pathname === '/vn/title/778') return flaky.down ? { ok: false, status: 429 } : { ok: true, text: async () => titlePage };
-    if (u.pathname === '/vn/title/82023496') return { ok: true, text: async () => titlePage };
+    if (u.pathname === '/vn-vi/title/778') return flaky.down ? { ok: false, status: 429 } : { ok: true, text: async () => titlePage };
+    if (u.pathname === '/vn-vi/title/82023496') return { ok: true, text: async () => titlePage };
     // Mã mùa 81720672: trang phim ghi mã gốc 81720671 (Netflix chuyển hướng sang /title/81720671)
-    if (u.pathname === '/vn/title/81720672') return { ok: true, url: 'https://www.netflix.com/vn/title/81720671', text: async () => fakeTitle({ type: 'Show', videoId: 81720671, topLevelVideoId: 81720671 }) };
+    if (u.pathname === '/vn-vi/title/81720672') return { ok: true, url: 'https://www.netflix.com/vn-vi/title/81720671', text: async () => fakeTitle({ type: 'Show', videoId: 81720671, topLevelVideoId: 81720671 }) };
     // Trang không ghi topLevelVideoId: lấy mã từ địa chỉ sau chuyển hướng
     // "#Yêu" và "Cơn bão": Netflix Original chiếu lần đầu
-    if (u.pathname === '/vn/title/81680909') return { ok: true, text: async () => fakeTitle({ type: 'Show', isOriginal: true, topLevelVideoId: 81680908 }) };
-    if (u.pathname === '/vn/title/81786721') return { ok: true, text: async () => fakeTitle({ type: 'Movie', isOriginal: true, topLevelVideoId: 81786721 }) };
+    if (u.pathname === '/vn-vi/title/81680909') return { ok: true, text: async () => fakeTitle({ type: 'Show', isOriginal: true, topLevelVideoId: 81680908 }) };
+    if (u.pathname === '/vn-vi/title/81786721') return { ok: true, text: async () => fakeTitle({ type: 'Movie', isOriginal: true, topLevelVideoId: 81786721 }) };
     const tudum = { '/tudum/top10/vietnam': tudumMovies, '/tudum/top10/vietnam/tv': tudumTv }[u.pathname];
     if (tudum) {
       if (top10Up === 'redirect') return { ok: true, url: 'https://www.netflix.com/tudum/top10/united-states', text: async () => tudum };
@@ -86,14 +86,14 @@ global.fetch = async (url, opts = {}) => {
       return { ok: true, url: String(url), text: async () => tudum };
     }
     // Trang phim của các tựa trong Top 10: tên giả lập "Top10 <mã>"
-    const t10 = u.pathname.match(/^\/vn\/title\/(\d+)$/);
-    if (u.pathname === '/vn/title/82682379') return { ok: true, text: async () => showPage };
+    const t10 = u.pathname.match(/^\/vn-vi\/title\/(\d+)$/);
+    if (u.pathname === '/vn-vi/title/82682379') return { ok: true, text: async () => showPage };
     // "Firefly Wedding" (83136358): giả lập trang phim Netflix không đọc được
     if (t10 && top10Type.has(t10[1]) && t10[1] !== '83136358') {
       const id = Number(t10[1]);
       return { ok: true, text: async () => fakeTitle({ type: top10Type.get(t10[1]) === 'tv' ? 'Show' : 'Movie', videoId: id, topLevelVideoId: id }, { title: `Top10 ${id}` }) };
     }
-    if (u.pathname === '/vn/title/555') return { ok: true, url: 'https://www.netflix.com/vn/title/554?fromWatch=true', text: async () => fakeTitle({ type: 'Show' }) };
+    if (u.pathname === '/vn-vi/title/555') return { ok: true, url: 'https://www.netflix.com/vn-vi/title/554?fromWatch=true', text: async () => fakeTitle({ type: 'Show' }) };
     return { ok: false, status: 404 };
   }
   const det = u.pathname.match(/^\/3\/(movie|tv)\/(\d+)$/);
@@ -553,7 +553,7 @@ function call(handler, path) {
   assert.ok(songDbg.tried.some((t) => t.startsWith('movie/1058827') && t.includes('-4')));  // phim sai bị trừ điểm
   assert.ok(songDbg.tried.some((t) => t.startsWith('movie/1458857') && t.includes('+12'))); // đạo diễn + 2 diễn viên khớp
   assert.ok(!dbg.needsReview.some((x) => x.title === 'Sống đời'));   // trùng đạo diễn/diễn viên: không cần kiểm tra
-  assert.ok(dbg.needsReview.every((x) => x.tmdb.startsWith('https://www.themoviedb.org/') && x.netflix.startsWith('https://www.netflix.com/vn/title/')));
+  assert.ok(dbg.needsReview.every((x) => x.tmdb.startsWith('https://www.themoviedb.org/') && x.netflix.startsWith('https://www.netflix.com/vn-vi/title/')));
 
   // Trang chi tiết khi dữ liệu chưa tải: trả 404 ngay (không chờ 20–40 giây), đồng thời bắt đầu tải
   apiUp = true; wdUp = true; top10Up = true;

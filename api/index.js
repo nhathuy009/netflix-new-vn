@@ -107,7 +107,7 @@ function toItem(row) {
 
 // ---------- Trang phim Netflix: loại, đạo diễn, diễn viên, mô tả ----------
 
-const titleUrl = (id) => `https://www.netflix.com/vn/title/${id}`;
+const titleUrl = (id) => `https://www.netflix.com/vn-vi/title/${id}`;
 
 // Cắt khối JSON {...} ngay sau `key` bằng cách đếm ngoặc (bỏ qua ngoặc nằm trong chuỗi)
 function extractObject(text, key) {

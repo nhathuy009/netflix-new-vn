@@ -19,7 +19,7 @@ Addon cung cấp danh sách và trang chi tiết tiếng Việt cho các phim tr
    - Netflix ghi rõ loại (`collection`: 2170013 = loạt phim, 2694103 = phim) → dùng luôn.
    - Phụ đề là "Mùa N", "Chương N", "Loạt phim…" → loạt phim.
    - Còn lại → để TMDB quyết định.
-4. Tải trang phim Netflix của từng tựa (gửi header như trình duyệt, mỗi lần 5 trang song song; lỗi thì thử lại một lần, vẫn lỗi thì dùng trang đọc được lần trước của tựa đó) (`netflix.com/vn/title/<id>`) để lấy loại chính xác (phim/loạt phim), đạo diễn, diễn viên, thể loại, mô tả tiếng Việt và cờ Netflix Original.
+4. Tải trang phim Netflix của từng tựa (gửi header như trình duyệt, mỗi lần 5 trang song song; lỗi thì thử lại một lần, vẫn lỗi thì dùng trang đọc được lần trước của tựa đó) (`netflix.com/vn-vi/title/<id>`) để lấy loại chính xác (phim/loạt phim), đạo diễn, diễn viên, thể loại, mô tả tiếng Việt và cờ Netflix Original.
 5. Tìm IMDb ID cho từng tựa:
    - **Wikidata trước:** tra thẳng theo mã Netflix (thuộc tính `P1874`), một request cho cả danh sách. Chính xác tuyệt đối, nhưng phim mới thường chưa được nhập.
    - **Không có trên Wikidata:** tìm TMDB bằng tên tiếng Việt và tiếng Anh (với Netflix Original chiếu lần đầu, tìm thêm một lượt lọc theo năm lên Netflix), xét toàn bộ 20 kết quả mỗi lượt, chấm điểm ứng viên theo loại, tên và ngày ra mắt so với ngày lên Netflix. Với Netflix Original chiếu lần đầu, ứng viên ra trước ngày lên Netflix hơn 1 năm bị loại. Với 3 ứng viên tốt nhất, đối chiếu đạo diễn và diễn viên với trang Netflix (+6 nếu trùng đạo diễn, +6 nếu trùng từ 2 diễn viên, −4 nếu không trùng ai), rồi lấy ứng viên tổng điểm cao nhất có IMDb ID.
