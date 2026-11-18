@@ -47,7 +47,7 @@ Addon cung cấp danh sách và trang chi tiết tiếng Việt cho các phim tr
    - `top10`: thứ hạng tuần (`weeklyRank`), số tuần trong Top 10 (`cumulativeWeeksInTop10`), ngày cuối tuần (`weekEndDate`), loại (`MOVIES`/`SERIES`) và `videoId`. Với loạt phim, `videoId` là mã của **mùa**.
    - `displayVideo.video.parentShow.videoId`: mã của cả loạt phim (phim lẻ không có `parentShow`, dùng `video.videoId`).
    - `top10Video.parentShow.title`: tên tiếng Anh của loạt phim, dùng khi tìm TMDB.
-3. Trang lưu mỗi tựa hai lần, addon bỏ bản trùng.
+3. Chỉ lấy tuần mới nhất: trang có thể chứa mục của nhiều tuần, addon giữ các mục có `weekEndDate` lớn nhất và bỏ phần còn lại. Trang lưu mỗi tựa hai lần, addon bỏ bản trùng (giữ bản đầu tiên).
 4. Đọc trang phim theo mã loạt phim để lấy tên tiếng Việt, loại, đạo diễn, diễn viên, mô tả; rồi tìm IMDb ID như danh sách phim mới (Wikidata trước, sau đó tìm TMDB). Không đọc được trang phim thì dùng tên tiếng Anh trên trang Tudum để hiển thị và tìm, và đưa tựa đó vào `needsReview`.
 5. Xếp theo thứ hạng Netflix, hiển thị dạng "#4 tại Việt Nam · 20 tuần trong Top 10". Một loạt phim có nhiều mùa cùng lọt Top 10 chỉ hiện một lần, ở hạng cao nhất.
 6. Trang Top 10 lỗi, hoặc Netflix chuyển sang trang nước khác: dòng tương ứng trống và `/debug.json` ghi lý do; các dòng khác vẫn chạy.

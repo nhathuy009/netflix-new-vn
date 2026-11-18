@@ -236,6 +236,10 @@ function call(handler, path) {
   assert.strictEqual(TOP10.find((r) => r.type === 'movie' && r.rank === 7).weeks, 84);
   assert.deepStrictEqual(h.parseTudumTop10(tudumTv, 'movie'), []); // trang loạt phim không có khối MOVIES
   assert.deepStrictEqual(h.parseTudumTop10('<html></html>', 'movie'), []);
+  // Trang có cả mục của tuần cũ: chỉ lấy tuần mới nhất, mục tuần cũ cùng mã không ghi đè hạng tuần mới
+  const oldWeek = (id, rank) => `"PulseTop10ItemEntity:old-${id}":{"__typename":"PulseTop10ItemEntity","top10":{"weekEndDate":"2026-10-11","category":"MOVIES","weeklyRank":${rank},"videoId":${id}},"top10Video":{"title":"Old ${id}"}},`;
+  const mixed = tudumMovies.replace('{"data":{', '{"data":{' + oldWeek(99999999, 1) + oldWeek(81779693, 1));
+  assert.deepStrictEqual(h.parseTudumTop10(mixed, 'movie'), TOP10.filter((r) => r.type === 'movie'));
   assert.strictEqual(nf.title, 'Sống đời');
   assert.strictEqual(nf.seasons, undefined); // phim lẻ: không có danh sách mùa
   // Loạt phim: đọc danh sách mùa, tập tiếng Việt từ khối Show

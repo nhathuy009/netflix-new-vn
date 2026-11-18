@@ -382,14 +382,18 @@ function parseTudumGraphql(html) {
 //   top10: thứ hạng tuần, số tuần trong Top 10, ngày cuối tuần, loại, videoId (với loạt phim là mã của MÙA)
 //   displayVideo.video: mục phim; với loạt phim là Season, parentShow.videoId là mã của cả loạt phim
 //   top10Video: tên tiếng Anh, parentShow.title là tên loạt phim
+//   Trang có thể chứa mục của nhiều tuần: chỉ lấy tuần mới nhất (weekEndDate lớn nhất)
 function parseTudumTop10(html, type) {
   const data = parseTudumGraphql(html);
   if (!data) return [];
+  const entries = Object.entries(data)
+    .filter(([key, e]) => key.startsWith('PulseTop10ItemEntity:') && e?.top10?.category === TOP10_CATEGORY[type] && e.top10.videoId && e.top10.weeklyRank)
+    .map(([, e]) => e);
+  const latest = entries.reduce((m, e) => ((e.top10.weekEndDate || '') > m ? e.top10.weekEndDate : m), '');
   const rows = new Map();
-  for (const [key, e] of Object.entries(data)) {
-    if (!key.startsWith('PulseTop10ItemEntity:')) continue;
-    const d = e?.top10;
-    if (!d || d.category !== TOP10_CATEGORY[type] || !d.videoId || !d.weeklyRank) continue;
+  for (const e of entries) {
+    const d = e.top10;
+    if ((d.weekEndDate || '') !== latest || rows.has(d.videoId)) continue;
     const video = e.displayVideo?.video;
     const showId = Number(video?.parentShow?.videoId || video?.videoId || d.videoId);
     const tv = e.top10Video || {};
